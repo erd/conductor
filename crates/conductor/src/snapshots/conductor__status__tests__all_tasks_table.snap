@@ -1,0 +1,10 @@
+---
+source: crates/conductor/src/status.rs
+expression: "render_table(&rows, \"web-3f9a1c\", now())"
+---
+ID             TITLE                                     PHASE           ACTIVITY                               FOR    BRANCH                   PR
+audit-deps-01  Audit outdated dependencies               torn_down       exited                                 1d     conductor/audit-deps-01  -
+add-docs-02    Document the deploy process               awaiting_merge  idle                                   3h15m  conductor/add-docs-02    #42 open ✓ approved
+fix-login-07   Fix login redirect loop                   working         Edit src/login.rs                      29m    conductor/fix-login-07   -
+pick-db-03     Pick a database for the analytics pipel…  needs_decision  needs permission · decision: database  2m     conductor/pick-db-03     -
+rate-limit-08  Rate-limit the signup endpoint            briefed         not started                            5m     -                        -

@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 
-use crate::{Error, Event, Result, Task, events_path, task_path};
+use crate::{Error, Event, RepoRecord, Result, Task, events_path, repo_record_path, task_path};
 
 /// The longest event line [`append_event`] writes, including its `\n`.
 ///
@@ -152,6 +152,56 @@ pub fn read_task(task_dir: &Path) -> Result<Task> {
     let path = task_path(task_dir);
     let bytes = fs::read(&path).map_err(Error::io(&path))?;
     serde_json::from_slice(&bytes).map_err(Error::json(&path))
+}
+
+/// Writes `repo.json` in `repo_dir`, the same way as [`write_task_atomic`].
+///
+/// # Errors
+///
+/// [`Error::Io`] if any step fails; the temp file is removed.
+pub fn write_repo_record_atomic(repo_dir: &Path, record: &RepoRecord) -> Result<()> {
+    write_json_atomic(&repo_record_path(repo_dir), record)
+}
+
+/// Reads `repo.json` in `repo_dir`, or `None` if there isn't one yet.
+///
+/// # Errors
+///
+/// [`Error::Io`] if it can't be read, and [`Error::Json`] if it doesn't parse.
+pub fn read_repo_record(repo_dir: &Path) -> Result<Option<RepoRecord>> {
+    let path = repo_record_path(repo_dir);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Error::io(&path)(e)),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(Error::json(&path))
+}
+
+/// The ids of the tasks in `repo_dir`: the names of the directories under `tasks/`, sorted.
+/// A repo with no `tasks/` directory has none.
+///
+/// # Errors
+///
+/// [`Error::Io`] if `tasks/` can't be listed.
+pub fn task_ids(repo_dir: &Path) -> Result<Vec<String>> {
+    let dir = repo_dir.join("tasks");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::io(&dir)(e)),
+    };
+    let mut ids = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(Error::io(&dir))?;
+        if entry.file_type().map_err(Error::io(entry.path()))?.is_dir() {
+            ids.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    ids.sort();
+    Ok(ids)
 }
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
