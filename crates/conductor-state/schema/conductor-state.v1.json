@@ -33,7 +33,12 @@
       "oneOf": [
         {
           "const": "user",
-          "description": "The human, through the deck or by telling the conductor.",
+          "description": "The human, by telling the conductor.",
+          "type": "string"
+        },
+        {
+          "const": "deck",
+          "description": "The human, through the deck.",
           "type": "string"
         },
         {
@@ -713,6 +718,7 @@
           "$ref": "#/$defs/Phase"
         },
         "pr_url": {
+          "description": "The task's PR. `conductor report --pr` doesn't set this: a worker writing `task.json`\nwould race the conductor's own writes, which nothing locks. The URL a worker reports\nstays in its `status` event, and readers get it from\n[`LiveStatus::pr_url`](crate::LiveStatus::pr_url).",
           "type": [
             "string",
             "null"
