@@ -10,7 +10,9 @@ repository = "https://github.com/erd/conductor"
 publish = false
 
 [workspace.dependencies]
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+insta = "1"
 jiff = { version = "0.2", features = ["serde"] }
 schemars = { version = "1.2", features = ["jiff02"] }
 serde = { version = "1", features = ["derive"] }
