@@ -1,0 +1,7 @@
+{"ts":"2026-10-14T12:00:00Z","task":"fix-login-07","session_id":"s1","kind":"session_start","source":"startup","herdr_pane_id":"p1","herdr_workspace_id":"w1","transcript_path":"/tmp/s1.jsonl"}
+{"ts":"2026-10-14T12:00:01Z","task":"fix-login-07","session_id":"s1","kind":"prompt","text":"Read your brief at /b/brief.md and follow the worker skill."}
+{"ts":"2026-10-14T12:00:05Z","task":"fix-login-07","session_id":"s1","kind":"tool_start","tool_name":"Read","summary":"src/login.rs","tool_use_id":"tu1"}
+{"ts":"2026-10-14T12:00:06Z","task":"fix-login-07","session_id":"s1","kind":"tool_end","tool_name":"Read","summary":"src/login.rs","tool_use_id":"tu1","ok":true}
+{"ts":"2026-10-14T12:05:00Z","task":"fix-login-07","session_id":"s1","kind":"status","verb":"done","text":"Draft PR open","pr_url":"https://github.com/erd/web/pull/42"}
+{"ts":"2026-10-14T12:05:02Z","task":"fix-login-07","session_id":"s1","kind":"turn_end"}
+{"ts":"2026-10-14T12:06:02Z","task":"fix-login-07","session_id":"s1","kind":"attention","type":"idle_prompt","message":"Claude is waiting for your input"}
