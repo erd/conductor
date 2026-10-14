@@ -482,6 +482,7 @@ fn repo_record() {
         "repo_id": "hamlet-web-v2-3f9a1c",
         "conductor_session": "conductor-hamlet-web-v2",
         "herdr_workspace_id": "ws-1",
+        "herdr_pane_id": "p-2",
     });
     let record = RepoRecord {
         schema: SchemaV1,
@@ -489,15 +490,18 @@ fn repo_record() {
         repo_id: "hamlet-web-v2-3f9a1c".into(),
         conductor_session: "conductor-hamlet-web-v2".into(),
         herdr_workspace_id: Some("ws-1".into()),
+        herdr_pane_id: Some("p-2".into()),
     };
     check(&doc, &record);
 
     let mut doc = doc;
     doc.as_object_mut().unwrap().remove("herdr_workspace_id");
+    doc.as_object_mut().unwrap().remove("herdr_pane_id");
     check(
         &doc,
         &RepoRecord {
             herdr_workspace_id: None,
+            herdr_pane_id: None,
             ..record
         },
     );

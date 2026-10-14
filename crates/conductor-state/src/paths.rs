@@ -38,6 +38,12 @@ impl Home {
         self.0.join("config.toml")
     }
 
+    /// `logs/`.
+    #[must_use]
+    pub fn logs_dir(&self) -> PathBuf {
+        self.0.join("logs")
+    }
+
     /// `repos/<repo-id>/`.
     #[must_use]
     pub fn repo_dir(&self, repo_id: &str) -> PathBuf {
