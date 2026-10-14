@@ -117,6 +117,15 @@ Install:
       report.md                       result summary or scout output
 ```
 
+File format (`conductor-state`, which also publishes a JSON Schema at
+`crates/conductor-state/schema/conductor-state.v1.json`):
+
+- Every key and enum value is `snake_case`.
+- `task.json`, `repo.json` and `decisions/<key>.json` carry `"schema":
+  "conductor-state.v1"`. A reader rejects any other marker.
+- Readers ignore unknown fields, and an unknown event `kind` is kept rather than
+  rejected, so new fields and event kinds don't break older readers.
+
 Naming:
 
 - **`<repo-id>`**: the repo directory name plus a short hash of its canonical
@@ -150,7 +159,7 @@ Every event carries `ts`, `task`, `kind`, and `session_id` (when known).
 |---|---|---|
 | `session_start` | SessionStart hook | `source`, `herdr_pane_id`, `herdr_workspace_id`, `transcript_path` |
 | `prompt` | UserPromptSubmit hook | first line of the prompt (truncated) |
-| `tool_start` / `tool_end` | PreToolUse / PostToolUse hooks | `tool_name`, a short summary (file path, command head), `ok` |
+| `tool_start` / `tool_end` | PreToolUse / PostToolUse hooks | `tool_name`, a short summary (file path, command head), `tool_use_id?`, `ok` (end only) |
 | `attention` | Notification hook | `type` (`permission_prompt`, `idle_prompt`, …), message |
 | `turn_end` | Stop / StopFailure hooks | `error?` |
 | `session_end` | SessionEnd hook | `reason` |
@@ -192,11 +201,15 @@ stateDiagram-v2
     awaiting_merge --> merged: I merge on GitHub
     review --> torn_down: scout report accepted
     merged --> torn_down: pull + wt remove
+    failed --> abandoned
+    failed --> torn_down
+    abandoned --> torn_down
     torn_down --> [*]
 
     note right of torn_down
         failed / abandoned can be
         reached from any phase
+        except torn_down
     end note
 ```
 
