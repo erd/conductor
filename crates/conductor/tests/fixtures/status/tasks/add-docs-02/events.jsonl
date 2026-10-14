@@ -1,0 +1,6 @@
+{"ts":"2026-10-14T08:01:00Z","task":"add-docs-02","session_id":"s3","kind":"session_start","source":"startup","herdr_pane_id":"p3","herdr_workspace_id":"w3"}
+{"ts":"2026-10-14T08:01:01Z","task":"add-docs-02","session_id":"s3","kind":"prompt","text":"Read your brief and follow the worker skill."}
+{"ts":"2026-10-14T09:14:00Z","task":"add-docs-02","session_id":"s3","kind":"status","verb":"done","text":"Draft PR open","pr_url":"https://github.com/erd/web/pull/42"}
+{"ts":"2026-10-14T09:15:00Z","task":"add-docs-02","session_id":"s3","kind":"turn_end"}
+{"ts":"2026-10-14T09:20:00Z","task":"add-docs-02","kind":"phase","from":"review","to":"awaiting_merge"}
+{"ts":"2026-10-14T11:00:00Z","task":"add-docs-02","kind":"pr","state":"open","checks":"pass","review":"approved"}

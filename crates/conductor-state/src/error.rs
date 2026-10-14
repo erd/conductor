@@ -15,6 +15,12 @@ pub enum Error {
         #[source]
         source: serde_json::Error,
     },
+    #[error("{}: {source}", path.display())]
+    Toml {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
     /// `git` failed, or the directory isn't inside a git repo.
     #[error("git in {}: {message}", dir.display())]
     Git { dir: PathBuf, message: String },

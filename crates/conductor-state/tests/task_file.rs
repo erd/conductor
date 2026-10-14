@@ -1,5 +1,6 @@
 use conductor_state::{
-    Error, Phase, SchemaV1, Task, TaskKind, read_task, task_path, write_task_atomic,
+    Error, Phase, RepoRecord, SchemaV1, Task, TaskKind, read_repo_record, read_task,
+    repo_record_path, task_ids, task_path, write_repo_record_atomic, write_task_atomic,
 };
 
 fn task(phase: Phase) -> Task {
@@ -67,4 +68,41 @@ fn rejects_other_schema() {
     .unwrap();
     let err = read_task(dir.path()).unwrap_err();
     assert!(matches!(err, Error::Json { .. }), "{err}");
+}
+
+#[test]
+fn repo_record_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(read_repo_record(dir.path()).unwrap(), None);
+
+    let record = RepoRecord {
+        schema: SchemaV1,
+        repo_root: "/src/web".into(),
+        repo_id: "web-3f9a1c".into(),
+        conductor_session: "conductor-web".into(),
+        herdr_workspace_id: Some("w1".into()),
+    };
+    write_repo_record_atomic(dir.path(), &record).unwrap();
+    assert_eq!(read_repo_record(dir.path()).unwrap(), Some(record));
+    assert_eq!(file_names(dir.path()), ["repo.json"]);
+
+    std::fs::write(repo_record_path(dir.path()), "{}").unwrap();
+    let err = read_repo_record(dir.path()).unwrap_err();
+    assert!(matches!(err, Error::Json { .. }), "{err}");
+}
+
+#[test]
+fn task_ids_lists_task_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(task_ids(dir.path()).unwrap(), [""; 0]);
+
+    let tasks = dir.path().join("tasks");
+    for id in ["fix-login-07", "add-docs-02"] {
+        std::fs::create_dir_all(tasks.join(id)).unwrap();
+    }
+    std::fs::write(tasks.join(".DS_Store"), "").unwrap();
+    assert_eq!(
+        task_ids(dir.path()).unwrap(),
+        ["add-docs-02", "fix-login-07"]
+    );
 }
