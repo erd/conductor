@@ -33,9 +33,10 @@
 //!   interleave. Long text fields are cut to [`MAX_TEXT_FIELD`]. [`read_events`] tails it
 //!   from a saved offset.
 //! - `task.json` has one writer, the `conductor` CLI, through [`write_task_atomic`]: a temp
-//!   file, `fsync`, then `rename`. `repo.json` is written the same way, by
-//!   [`write_repo_record_atomic`].
-//! - The deck writes neither. It computes each card's [`LiveStatus`] with [`fold`].
+//!   file, `fsync`, then `rename`. `repo.json` and `decisions/<key>.json` are written the same
+//!   way, also only by the CLI, by [`write_repo_record_atomic`] and [`write_decision_atomic`].
+//! - The deck writes none of these. It computes each card's [`LiveStatus`] with [`fold`], and
+//!   answers a decision by running `conductor decision answer`.
 //!
 //! # JSON Schema
 //!
@@ -68,8 +69,9 @@ pub use phase::Phase;
 pub use repo::RepoRecord;
 pub use schema::{SCHEMA_ID, SchemaV1, json_schema};
 pub use store::{
-    EventBatch, MAX_EVENT_LINE, MAX_TEXT_FIELD, SkippedLine, append_event, read_events,
-    read_repo_record, read_task, task_ids, write_repo_record_atomic, write_task_atomic,
+    EventBatch, MAX_EVENT_LINE, MAX_TEXT_FIELD, SkippedLine, append_event, read_decision,
+    read_decisions, read_events, read_repo_record, read_task, task_ids, write_decision_atomic,
+    write_repo_record_atomic, write_task_atomic,
 };
 pub use task::{Task, TaskKind};
 

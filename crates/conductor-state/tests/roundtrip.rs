@@ -439,6 +439,7 @@ fn decision_open() {
 fn decision_answered() {
     for (by, by_name, note) in [
         (AnsweredBy::User, "user", Some("keep it simple")),
+        (AnsweredBy::Deck, "deck", None),
         (AnsweredBy::Conductor, "conductor", None),
     ] {
         let mut doc = decision_doc();
