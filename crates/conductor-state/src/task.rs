@@ -31,6 +31,10 @@ pub struct Task {
     pub herdr_workspace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub herdr_pane_id: Option<String>,
+    /// The task's PR. `conductor report --pr` doesn't set this: a worker writing `task.json`
+    /// would race the conductor's own writes, which nothing locks. The URL a worker reports
+    /// stays in its `status` event, and readers get it from
+    /// [`LiveStatus::pr_url`](crate::LiveStatus::pr_url).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
     pub created_at: Timestamp,

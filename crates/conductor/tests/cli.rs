@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use conductor_state::{RepoRecord, read_repo_record, repo_record_path, resolve_repo};
+use conductor_state::{
+    Phase, RepoRecord, SchemaV1, Task, TaskKind, read_repo_record, repo_record_path, resolve_repo,
+    write_task_atomic,
+};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -239,6 +242,49 @@ fn status_reads_tasks_from_home() {
 }
 
 #[test]
+fn report_done_pr_shows_in_status_json() {
+    let fx = Fixture::new();
+    let task_dir = fx.repo_dir().join("tasks/fix-login-07");
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let ts = "2026-10-14T12:00:00Z".parse().unwrap();
+    let task = Task {
+        schema: SchemaV1,
+        id: "fix-login-07".into(),
+        title: "Fix login".into(),
+        kind: TaskKind::Ship,
+        phase: Phase::Working,
+        branch: Some("conductor/fix-login-07".into()),
+        worktree_path: None,
+        session_name: None,
+        claude_session_id: None,
+        herdr_workspace_id: None,
+        herdr_pane_id: None,
+        pr_url: None,
+        created_at: ts,
+        updated_at: ts,
+    };
+    write_task_atomic(&task_dir, &task).unwrap();
+    let url = "https://github.com/erd/my-repo/pull/42";
+
+    // A worker in its worktree, with only CONDUCTOR_TASK_ID: the repo comes from the cwd.
+    let output = fx
+        .command(&fx.worktree(), &["report", "done", "--pr", url])
+        .env("CONDUCTOR_TASK_ID", "fix-login-07")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_eq!(stdout(&output), "");
+    // task.json is left alone; the URL lives in the event.
+    let text = std::fs::read_to_string(task_dir.join("task.json")).unwrap();
+    assert!(!text.contains(url), "{text}");
+
+    let output = fx.run(&fx.repo(), &["status", "--json"]);
+    assert_success(&output);
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows[0]["pr_url"], url);
+}
+
+#[test]
 fn outside_a_git_repo_fails() {
     let fx = Fixture::new();
     for args in [&["status"][..], &["init"], &["start", "--dry-run"]] {
@@ -270,9 +316,7 @@ fn bad_config_fails_and_names_the_file() {
 #[test]
 fn stubs_are_not_implemented_yet() {
     let fx = Fixture::new();
-    for name in [
-        "report", "decision", "task", "spawn", "teardown", "watch", "resume",
-    ] {
+    for name in ["task", "spawn", "teardown", "watch", "resume"] {
         let output = fx.run(&fx.repo(), &[name, "some", "--args"]);
         assert_eq!(output.status.code(), Some(1), "{name}");
         assert_eq!(

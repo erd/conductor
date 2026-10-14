@@ -9,6 +9,7 @@ use jiff::Timestamp;
 use serde::Serialize;
 
 use crate::context::Ctx;
+use crate::table::{self, cut};
 
 /// Longest title the table shows before cutting it with `…`; activity uses the same limit.
 const MAX_CELL: usize = 40;
@@ -145,7 +146,6 @@ pub fn render_table(rows: &[Row], repo_id: &str, now: Timestamp) -> String {
     if rows.is_empty() {
         return format!("no tasks for {repo_id}\n");
     }
-    let header = ["ID", "TITLE", "PHASE", "ACTIVITY", "FOR", "BRANCH", "PR"].map(String::from);
     let cells: Vec<[String; 7]> = rows
         .iter()
         .map(|row| {
@@ -160,23 +160,10 @@ pub fn render_table(rows: &[Row], repo_id: &str, now: Timestamp) -> String {
             ]
         })
         .collect();
-
-    let mut widths = [0; 7];
-    for line in std::iter::once(&header).chain(&cells) {
-        for (width, cell) in widths.iter_mut().zip(line) {
-            *width = (*width).max(cell.chars().count());
-        }
-    }
-    let mut out = String::new();
-    for line in std::iter::once(&header).chain(&cells) {
-        let mut text = String::new();
-        for (cell, width) in line.iter().zip(widths) {
-            let _ = write!(text, "{cell:width$}  ");
-        }
-        out.push_str(text.trim_end());
-        out.push('\n');
-    }
-    out
+    table::render(
+        ["ID", "TITLE", "PHASE", "ACTIVITY", "FOR", "BRANCH", "PR"],
+        &cells,
+    )
 }
 
 fn activity_cell(row: &Row) -> String {
@@ -235,21 +222,11 @@ fn pr_cell(row: &Row) -> String {
 }
 
 /// The serde name of a unit enum variant, e.g. `awaiting_merge`.
-fn snake_case(value: &impl Serialize) -> String {
+pub fn snake_case(value: &impl Serialize) -> String {
     match serde_json::to_value(value) {
         Ok(serde_json::Value::String(s)) => s,
         _ => "?".into(),
     }
-}
-
-/// `s` cut to `max` characters, ending in `…` if anything was dropped.
-fn cut(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_owned();
-    }
-    let mut out: String = s.chars().take(max - 1).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]
@@ -300,12 +277,5 @@ mod tests {
         for (secs, text) in cases {
             assert_eq!(duration_cell(secs), text, "{secs}");
         }
-    }
-
-    #[test]
-    fn cuts_long_cells() {
-        assert_eq!(cut("short", 10), "short");
-        assert_eq!(cut("exactly 10", 10), "exactly 10");
-        assert_eq!(cut("much too long", 10), "much too …");
     }
 }

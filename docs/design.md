@@ -146,10 +146,13 @@ Writing rules, which avoid locking and the crash-recovery logic firstmate needs:
 - **`task.json`** is written only by `conductor` CLI subcommands, and only with
   a write-temp-then-rename. Its fields: id, title, phase, branch, worktree path,
   session name, Claude session id, herdr workspace and pane ids, kind (`ship`
-  or `scout`), PR URL, and timestamps.
-- **The deck never writes** `task.json` or `events.jsonl`. It works out live
-  status by replaying the events and reading herdr's own agent state. The only
-  thing it writes is a decision answer file.
+  or `scout`), PR URL, and timestamps. A worker's `report --pr` doesn't touch
+  it: the URL stays in the `status` event, and readers take it from the fold.
+- **`decisions/<key>.json`** is written only by `conductor decision open` and
+  `conductor decision answer`, the same write-temp-then-rename way.
+- **The deck never writes** state files. It works out live status by
+  replaying the events and reading herdr's own agent state, and answers a
+  decision by running `conductor decision answer --by deck`.
 
 ### Event types (`conductor-state`)
 
@@ -163,8 +166,8 @@ Every event carries `ts`, `task`, `kind`, and `session_id` (when known).
 | `attention` | Notification hook | `type` (`permission_prompt`, `idle_prompt`, …), message |
 | `turn_end` | Stop / StopFailure hooks | `error?` |
 | `session_end` | SessionEnd hook | `reason` |
-| `status` | `conductor report <verb> "<text>"` (worker) | verb: `working`, `blocked`, `done`, `failed`, plus text, `pr_url?` |
-| `decision_open` / `decision_answered` | `conductor decision …` / the deck or the conductor | `key` |
+| `status` | `conductor report <verb> ["<text>"] [--pr <url>]` (worker) | verb: `working`, `blocked`, `done`, `failed`, plus text, `pr_url?` |
+| `decision_open` / `decision_answered` | `conductor decision open` (worker) / `conductor decision answer` (the deck or the conductor) | `key` |
 | `phase` | `conductor task phase …` (conductor) | `from`, `to` |
 | `pr` | `conductor watch` polling `gh pr view` | `state` (draft, open, merged, closed), `checks` (pass, fail, pending), `review` (`reviewDecision`) |
 
@@ -269,7 +272,7 @@ stateDiagram-v2
 - Report progress with `conductor report working "<what>"` at milestones.
   Low-level activity comes from hooks for free.
 - When blocked on a question, run `conductor decision open <key> --title …
-  --options …`. Then `SendMessage` to `conductor-<repo>` with a one-line
+  --option <value>=<label>[:<hint>] …`. Then `SendMessage` to `conductor-<repo>` with a one-line
   summary, and end the turn.
 - On finishing a ship task: push the branch, open a draft PR with `gh pr
   create --draft`, and run `conductor report done --pr <url>`. Then
@@ -382,8 +385,8 @@ which is moved to `hook.log.1` once it reaches 1 MiB.
   decision, from the latest `pr` event). Cards needing attention sort to the
   top, and `awaiting_merge` cards sort just below them.
 - **Keys:** `Enter`/click runs `herdr agent focus <pane>`. `m` messages the
-  worker. `d` answers an open decision: it writes `decisions/<key>.json` and
-  prompts the worker. `o` opens the PR in the browser. `c` focuses the
+  worker. `d` answers an open decision: it runs `conductor decision answer
+  --by deck` and prompts the worker. `o` opens the PR in the browser. `c` focuses the
   conductor. `L` shows or hides torn-down tasks.
 - **Build:** herdr's `[[build]]` step runs `cargo build --release` on install.
   Plugin panes start with a minimal `PATH`, so the deck finds herdr through

@@ -4,8 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
-use crate::{Error, Event, RepoRecord, Result, Task, events_path, repo_record_path, task_path};
+use crate::{
+    Decision, Error, Event, RepoRecord, Result, Task, decision_path, events_path, repo_record_path,
+    task_path,
+};
 
 /// The longest event line [`append_event`] writes, including its `\n`.
 ///
@@ -169,15 +173,60 @@ pub fn write_repo_record_atomic(repo_dir: &Path, record: &RepoRecord) -> Result<
 ///
 /// [`Error::Io`] if it can't be read, and [`Error::Json`] if it doesn't parse.
 pub fn read_repo_record(repo_dir: &Path) -> Result<Option<RepoRecord>> {
-    let path = repo_record_path(repo_dir);
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(Error::io(&path)(e)),
+    read_json_if_exists(&repo_record_path(repo_dir))
+}
+
+/// Writes `decisions/<key>.json` in `task_dir`, the same way as [`write_task_atomic`],
+/// creating `decisions/` if needed. Doesn't create `task_dir`.
+///
+/// # Errors
+///
+/// [`Error::Io`] if `decisions/` can't be created or any write step fails.
+pub fn write_decision_atomic(task_dir: &Path, decision: &Decision) -> Result<()> {
+    let path = decision_path(task_dir, &decision.key);
+    if !task_dir.is_dir() {
+        return Err(Error::io(task_dir)(ErrorKind::NotFound.into()));
+    }
+    let dir = task_dir.join("decisions");
+    fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+    write_json_atomic(&path, decision)
+}
+
+/// Reads `decisions/<key>.json` in `task_dir`, or `None` if there's no such decision.
+///
+/// # Errors
+///
+/// [`Error::Io`] if it can't be read, and [`Error::Json`] if it doesn't parse.
+pub fn read_decision(task_dir: &Path, key: &str) -> Result<Option<Decision>> {
+    read_json_if_exists(&decision_path(task_dir, key))
+}
+
+/// Reads every decision in `task_dir`'s `decisions/`, sorted by key. Temp files (dotfiles) and
+/// anything not ending in `.json` are skipped. A task with no `decisions/` has none.
+///
+/// # Errors
+///
+/// [`Error::Io`] if `decisions/` can't be listed or a file can't be read, and [`Error::Json`]
+/// if a file doesn't parse.
+pub fn read_decisions(task_dir: &Path) -> Result<Vec<Decision>> {
+    let dir = task_dir.join("decisions");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::io(&dir)(e)),
     };
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(Error::json(&path))
+    let mut decisions = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(Error::io(&dir))?.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.starts_with('.') || path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let bytes = fs::read(&path).map_err(Error::io(&path))?;
+        decisions.push(serde_json::from_slice::<Decision>(&bytes).map_err(Error::json(&path))?);
+    }
+    decisions.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(decisions)
 }
 
 /// The ids of the tasks in `repo_dir`: the names of the directories under `tasks/`, sorted.
@@ -202,6 +251,17 @@ pub fn task_ids(repo_dir: &Path) -> Result<Vec<String>> {
     }
     ids.sort();
     Ok(ids)
+}
+
+fn read_json_if_exists<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Error::io(path)(e)),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(Error::json(path))
 }
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
