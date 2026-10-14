@@ -98,7 +98,7 @@ fn resumes_from_saved_offset() {
     assert_eq!(second.offset, std::fs::metadata(&path).unwrap().len());
 
     let third = read_events(&path, second.offset).unwrap();
-    assert!(third.events.is_empty());
+    assert_eq!(third.events, []);
     assert_eq!(third.offset, second.offset);
 }
 
@@ -116,7 +116,7 @@ fn ignores_trailing_partial_line() {
     let batch = read_events(&path, 0).unwrap();
     assert_eq!(batch.events, [prompt("one")]);
     assert_eq!(batch.offset, complete);
-    assert!(batch.skipped.is_empty());
+    assert_eq!(batch.skipped, []);
 
     // Finishing the line makes it visible to the next read.
     append_raw(&path, format!("{tail}\n").as_bytes());
@@ -143,7 +143,7 @@ fn skips_malformed_lines() {
 fn missing_file_reads_empty() {
     let dir = tempfile::tempdir().unwrap();
     let batch = read_events(&events_path(dir.path()), 0).unwrap();
-    assert!(batch.events.is_empty());
+    assert_eq!(batch.events, []);
     assert_eq!(batch.offset, 0);
 }
 

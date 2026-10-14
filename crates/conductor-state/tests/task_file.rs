@@ -51,7 +51,7 @@ fn missing_dir_fails_cleanly() {
     let dir = tempfile::tempdir().unwrap();
     let err = write_task_atomic(&dir.path().join("nope"), &task(Phase::Intake)).unwrap_err();
     assert!(matches!(err, Error::Io { .. }), "{err}");
-    assert!(file_names(dir.path()).is_empty());
+    assert_eq!(file_names(dir.path()), [""; 0]);
 }
 
 #[test]
