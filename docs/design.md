@@ -108,7 +108,7 @@ Install:
 ~/.config/conductor/
   config.toml                         global defaults plus optional [repos."<repo-id>"] overrides
   repos/<repo-id>/
-    repo.json                         repo root path, conductor session name, primary herdr workspace id
+    repo.json                         repo root path, conductor session name, primary herdr workspace id, conductor pane id
     tasks/<task-id>/
       task.json                       task record (one writer: the conductor CLI)
       brief.md                        the task contract the worker reads
@@ -159,7 +159,7 @@ Every event carries `ts`, `task`, `kind`, and `session_id` (when known).
 |---|---|---|
 | `session_start` | SessionStart hook | `source`, `herdr_pane_id`, `herdr_workspace_id`, `transcript_path` |
 | `prompt` | UserPromptSubmit hook | first line of the prompt (truncated) |
-| `tool_start` / `tool_end` | PreToolUse / PostToolUse hooks | `tool_name`, a short summary (file path, command head), `tool_use_id?`, `ok` (end only) |
+| `tool_start` / `tool_end` | PreToolUse / PostToolUse and PostToolUseFailure hooks | `tool_name`, a short summary (file path, command head), `tool_use_id?`, `ok` (end only) |
 | `attention` | Notification hook | `type` (`permission_prompt`, `idle_prompt`, …), message |
 | `turn_end` | Stop / StopFailure hooks | `error?` |
 | `session_end` | SessionEnd hook | `reason` |
@@ -227,7 +227,7 @@ stateDiagram-v2
       <task> --no-focus --json`, which folds the new workspace under the
       conductor's, and records the workspace and pane ids;
    3. runs `herdr pane run <pane> "CONDUCTOR_TASK_ID=<task>
-      CONDUCTOR_HOME=… claude -n <repo>-<task> --permission-mode auto 'Read
+      CONDUCTOR_REPO_ID=<repo-id> CONDUCTOR_HOME=… claude -n <repo>-<task> --permission-mode auto 'Read
       your brief at <path> and follow the worker skill.'"`.
 4. **Supervise.** Wake on worker messages and on events (see [Waking the
    conductor](#waking-the-conductor)). Answer decisions the conductor can
@@ -329,6 +329,12 @@ session on the machine. The hook command is a small shim that execs
 otherwise. The binary returns immediately unless `CONDUCTOR_TASK_ID` or
 `CONDUCTOR_ROLE` is set. Measured cost: about 8.5 ms per hook versus 4.6 ms
 for `sh -c true`, the same as a `jq` call. That is negligible.
+
+In a conductor session the hook finds its state dir from `CONDUCTOR_REPO_ID`,
+which `conductor start` and spawn set alongside `CONDUCTOR_ROLE` and
+`CONDUCTOR_TASK_ID`. It always exits 0 and prints nothing, since Claude would
+parse stdout as hook output. Errors go to `logs/hook.log` in the state dir,
+which is moved to `hook.log.1` once it reaches 1 MiB.
 
 ## Permissions
 

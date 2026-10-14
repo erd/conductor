@@ -18,4 +18,7 @@ pub struct RepoRecord {
     /// The repo's primary herdr workspace, which worker workspaces fold under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub herdr_workspace_id: Option<String>,
+    /// The herdr pane the conductor session runs in, recorded by its `SessionStart` hook.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub herdr_pane_id: Option<String>,
 }

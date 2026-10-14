@@ -1,0 +1,18 @@
+{
+  "event": "stop-failure",
+  "input": {
+    "session_id": "abc123",
+    "transcript_path": "/Users/me/.claude/projects/-src-my-repo/00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
+    "cwd": "/src/my-repo/.worktrees/fix-login-07",
+    "hook_event_name": "StopFailure",
+    "error": "rate_limit",
+    "error_details": "429 Too Many Requests",
+    "last_assistant_message": "API Error: Rate limit reached"
+  },
+  "expected": {
+    "task": "fix-login-07",
+    "session_id": "abc123",
+    "kind": "turn_end",
+    "error": "rate_limit: 429 Too Many Requests"
+  }
+}

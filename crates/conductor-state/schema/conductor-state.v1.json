@@ -615,6 +615,13 @@
           "description": "The conductor's Claude session name, `conductor-<repo>`.",
           "type": "string"
         },
+        "herdr_pane_id": {
+          "description": "The herdr pane the conductor session runs in, recorded by its `SessionStart` hook.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "herdr_workspace_id": {
           "description": "The repo's primary herdr workspace, which worker workspaces fold under.",
           "type": [
