@@ -1,6 +1,6 @@
 [package]
 name = "conductor-state"
-description = "Shared state types for conductor: task records, events, and decisions"
+description = "Shared state types and storage for conductor: task records, events, decisions, and the live-status fold"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,11 @@ jiff.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 toml.workspace = true
 
 [lints]
