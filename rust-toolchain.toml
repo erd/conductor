@@ -1,4 +1,7 @@
+# Pinned to an exact release so every CI runner and dev machine runs the same clippy; a
+# floating `stable` lets a new lint fail CI on one runner but not another. Bump it on purpose,
+# in its own commit, and fix any new lints there.
 [toolchain]
-channel = "stable"
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]
 profile = "minimal"
