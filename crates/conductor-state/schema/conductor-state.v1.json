@@ -1,0 +1,786 @@
+{
+  "$defs": {
+    "Answer": {
+      "description": "The answer to a [`Decision`].",
+      "properties": {
+        "answered_by": {
+          "$ref": "#/$defs/AnsweredBy"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ts": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "value": {
+          "description": "An option's `value`, or free text when the decision allows it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "answered_by",
+        "ts"
+      ],
+      "type": "object"
+    },
+    "AnsweredBy": {
+      "description": "Who answered a [`Decision`].",
+      "oneOf": [
+        {
+          "const": "user",
+          "description": "The human, through the deck or by telling the conductor.",
+          "type": "string"
+        },
+        {
+          "const": "conductor",
+          "description": "The conductor, on its own authority.",
+          "type": "string"
+        }
+      ]
+    },
+    "CheckState": {
+      "description": "The rollup of a PR's checks.",
+      "enum": [
+        "pass",
+        "fail",
+        "pending"
+      ],
+      "type": "string"
+    },
+    "Config": {
+      "description": "`config.toml`: global defaults, plus optional per-repo overrides under\n`[repos.\"<repo-id>\"]`. Use [`Config::resolve`] to get the settings for one repo.",
+      "properties": {
+        "branch_prefix": {
+          "default": "conductor/",
+          "description": "Prefix for task branches.",
+          "type": "string"
+        },
+        "deck_width": {
+          "default": 48,
+          "description": "Width of the deck, in columns.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effort": {
+          "description": "Claude effort level for workers; unset uses Claude Code's default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "Claude model for workers; unset uses Claude Code's default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pr_poll_interval": {
+          "default": "2m",
+          "description": "How often `conductor watch` polls an open PR, e.g. `\"2m\"`.",
+          "type": "string"
+        },
+        "repos": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RepoOverrides"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "Decision": {
+      "description": "An open question and, once answered, its answer: `decisions/<key>.json`.",
+      "properties": {
+        "about": {
+          "description": "Context for whoever answers.",
+          "type": "string"
+        },
+        "allow_freeform": {
+          "default": false,
+          "description": "Whether an answer may be free text instead of one of `options`.",
+          "type": "boolean"
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Answer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "description": "Unique within the task; also the file name.",
+          "type": "string"
+        },
+        "options": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          },
+          "type": "array"
+        },
+        "recommend": {
+          "description": "The `value` of the option the asker recommends.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema": {
+          "const": "conductor-state.v1",
+          "description": "Schema version marker for top-level state files.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "key",
+        "title",
+        "about"
+      ],
+      "type": "object"
+    },
+    "DecisionOption": {
+      "description": "One choice offered by a [`Decision`].",
+      "properties": {
+        "hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "type": "object"
+    },
+    "Event": {
+      "description": "One line of `events.jsonl`. The common fields sit next to the payload's fields, and the\npayload's `kind` says which payload it is.",
+      "oneOf": [
+        {
+          "description": "`SessionStart` hook.",
+          "properties": {
+            "herdr_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "herdr_workspace_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "session_start",
+              "type": "string"
+            },
+            "source": {
+              "description": "Why the session started: `startup`, `resume`, `clear`, `compact`, …",
+              "type": "string"
+            },
+            "transcript_path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`UserPromptSubmit` hook.",
+          "properties": {
+            "kind": {
+              "const": "prompt",
+              "type": "string"
+            },
+            "text": {
+              "description": "First line of the prompt, truncated.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`PreToolUse` hook.",
+          "properties": {
+            "kind": {
+              "const": "tool_start",
+              "type": "string"
+            },
+            "summary": {
+              "description": "Short summary of the input: a file path, a command's head, …",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "tool_use_id": {
+              "description": "Pairs this event with its `tool_end`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "tool_name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`PostToolUse` hook.",
+          "properties": {
+            "kind": {
+              "const": "tool_end",
+              "type": "string"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "summary": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "tool_use_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "tool_name",
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`Notification` hook.",
+          "properties": {
+            "kind": {
+              "const": "attention",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "description": "`permission_prompt`, `idle_prompt`, …",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "type",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`Stop` or `StopFailure` hook.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "turn_end",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`SessionEnd` hook.",
+          "properties": {
+            "kind": {
+              "const": "session_end",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`conductor report <verb>`, from the worker.",
+          "properties": {
+            "kind": {
+              "const": "status",
+              "type": "string"
+            },
+            "pr_url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "verb": {
+              "$ref": "#/$defs/StatusVerb"
+            }
+          },
+          "required": [
+            "kind",
+            "verb"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`conductor decision open`.",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "decision_open",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A decision was answered, by the deck or the conductor.",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "decision_answered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`conductor task phase`, from the conductor.",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/Phase"
+            },
+            "kind": {
+              "const": "phase",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/Phase"
+            }
+          },
+          "required": [
+            "kind",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`conductor watch` saw the task's PR change.",
+          "properties": {
+            "checks": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CheckState"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "const": "pr",
+              "type": "string"
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReviewDecision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "state": {
+              "$ref": "#/$defs/PrState"
+            }
+          },
+          "required": [
+            "kind",
+            "state"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "session_id": {
+          "description": "The Claude session id, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task": {
+          "description": "The task id.",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "task"
+      ],
+      "type": "object"
+    },
+    "Phase": {
+      "description": "Where a task is in its lifecycle. Changes only on purpose, through `conductor task phase`;\nsee the lifecycle diagram in `docs/design.md`.",
+      "oneOf": [
+        {
+          "const": "intake",
+          "description": "The goal is being captured and split into tasks.",
+          "type": "string"
+        },
+        {
+          "const": "briefed",
+          "description": "`brief.md` is written.",
+          "type": "string"
+        },
+        {
+          "const": "spawning",
+          "description": "`conductor spawn` is creating the worktree and worker session.",
+          "type": "string"
+        },
+        {
+          "const": "working",
+          "description": "The worker is running.",
+          "type": "string"
+        },
+        {
+          "const": "needs_decision",
+          "description": "The worker opened a decision and is waiting for an answer.",
+          "type": "string"
+        },
+        {
+          "const": "review",
+          "description": "The worker reported done; the conductor is reviewing its draft PR or scout report.",
+          "type": "string"
+        },
+        {
+          "const": "awaiting_merge",
+          "description": "The conductor marked the PR ready; waiting for a human to merge it on GitHub.",
+          "type": "string"
+        },
+        {
+          "const": "merged",
+          "description": "GitHub reports the PR merged.",
+          "type": "string"
+        },
+        {
+          "const": "torn_down",
+          "description": "The worktree, worker session and herdr workspace are gone.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The task failed and needs a human.",
+          "type": "string"
+        },
+        {
+          "const": "abandoned",
+          "description": "A human abandoned the task.",
+          "type": "string"
+        }
+      ]
+    },
+    "PrState": {
+      "description": "A PR's state on GitHub.",
+      "enum": [
+        "draft",
+        "open",
+        "merged",
+        "closed"
+      ],
+      "type": "string"
+    },
+    "RepoOverrides": {
+      "description": "Per-repo overrides; each set field replaces the global default.",
+      "properties": {
+        "branch_prefix": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deck_width": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pr_poll_interval": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RepoRecord": {
+      "description": "Per-repo record in `repos/<repo-id>/repo.json`.",
+      "properties": {
+        "conductor_session": {
+          "description": "The conductor's Claude session name, `conductor-<repo>`.",
+          "type": "string"
+        },
+        "herdr_workspace_id": {
+          "description": "The repo's primary herdr workspace, which worker workspaces fold under.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo_id": {
+          "description": "`<repo dir name>-<short hash of repo_root>`, e.g. `hamlet-web-v2-3f9a1c`.",
+          "type": "string"
+        },
+        "repo_root": {
+          "description": "Canonical path of the main checkout.",
+          "type": "string"
+        },
+        "schema": {
+          "const": "conductor-state.v1",
+          "description": "Schema version marker for top-level state files.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "repo_root",
+        "repo_id",
+        "conductor_session"
+      ],
+      "type": "object"
+    },
+    "ReviewDecision": {
+      "description": "GitHub's `reviewDecision` for a PR.",
+      "enum": [
+        "approved",
+        "changes_requested",
+        "review_required"
+      ],
+      "type": "string"
+    },
+    "StatusVerb": {
+      "description": "The verb of a `conductor report` call.",
+      "enum": [
+        "working",
+        "blocked",
+        "done",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "Task": {
+      "description": "The task record in `task.json`. Written only by `conductor` CLI subcommands, with a\nwrite-temp-then-rename.",
+      "properties": {
+        "branch": {
+          "description": "Git branch, `<branch_prefix><task-id>`. Set by `conductor spawn`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claude_session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "herdr_pane_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "herdr_workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Short slug from the title plus a counter, e.g. `fix-login-07`.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/TaskKind"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "pr_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema": {
+          "const": "conductor-state.v1",
+          "description": "Schema version marker for top-level state files.",
+          "type": "string"
+        },
+        "session_name": {
+          "description": "Claude session name, `<repo>-<task-id>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "worktree_path": {
+          "description": "Absolute path of the task's worktree. Set by `conductor spawn`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "id",
+        "title",
+        "kind",
+        "phase",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "TaskKind": {
+      "description": "What a task produces.",
+      "oneOf": [
+        {
+          "const": "ship",
+          "description": "Produces a change, delivered as a GitHub PR.",
+          "type": "string"
+        },
+        {
+          "const": "scout",
+          "description": "Produces `report.md` and no change.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$id": "conductor-state.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/Task"
+    },
+    {
+      "$ref": "#/$defs/Event"
+    },
+    {
+      "$ref": "#/$defs/Decision"
+    },
+    {
+      "$ref": "#/$defs/RepoRecord"
+    }
+  ],
+  "description": "conductor's on-disk state: task.json, events.jsonl lines, decisions/<key>.json, repo.json and config.toml.",
+  "title": "conductor-state.v1"
+}
