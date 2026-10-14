@@ -65,13 +65,17 @@ impl Fixture {
         self.home().join("repos").join(id)
     }
 
-    /// `conductor <args>` run in `dir` with this fixture's home and no herdr variables.
+    /// `conductor <args>` run in `dir` with this fixture's home and no herdr or conductor
+    /// session variables, which are set when the tests run inside a conductor worker.
     fn command(&self, dir: &Path, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_conductor"));
         command
             .args(args)
             .current_dir(dir)
             .env("CONDUCTOR_HOME", self.home())
+            .env_remove("CONDUCTOR_TASK_ID")
+            .env_remove("CONDUCTOR_ROLE")
+            .env_remove("CONDUCTOR_REPO_ID")
             .env_remove("HERDR_PANE_ID")
             .env_remove("HERDR_WORKSPACE_ID");
         command
@@ -127,6 +131,7 @@ fn init_same_record_from_main_checkout_and_worktree() {
             repo_root: root,
             conductor_session: "conductor-my-repo".into(),
             herdr_workspace_id: None,
+            herdr_pane_id: None,
         }
     );
 
@@ -168,9 +173,10 @@ fn start_dry_run_prints_command_and_writes_nothing() {
     assert_eq!(
         stdout(&output),
         format!(
-            "cd {}\nCONDUCTOR_ROLE=conductor CONDUCTOR_HOME={} claude -n conductor-my-repo \
-             --permission-mode auto /conductor:conductor\n",
+            "cd {}\nCONDUCTOR_ROLE=conductor CONDUCTOR_REPO_ID={} CONDUCTOR_HOME={} claude \
+             -n conductor-my-repo --permission-mode auto /conductor:conductor\n",
             root.display(),
+            conductor_state::repo_id_for_root(&root),
             fx.home().display(),
         )
     );
@@ -280,9 +286,68 @@ fn stubs_are_not_implemented_yet() {
 fn hook_never_fails() {
     let fx = Fixture::new();
     // Even outside a repo: the hook shim runs it in every Claude session.
-    let output = fx.run(fx.tmp.path(), &["hook", "pre_tool_use"]);
+    for args in [
+        &["hook", "pre-tool-use"][..],
+        &["hook", "pre_tool_use"],
+        &["hook", "no-such-event", "--extra"],
+        &["hook"],
+    ] {
+        let output = fx.run(fx.tmp.path(), args);
+        assert_success(&output);
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn conductor_session_start_records_pane_and_workspace() {
+    let fx = Fixture::new();
+    assert_success(&fx.run(&fx.repo(), &["init"]));
+    let repo_id = resolve_repo(&fx.repo()).unwrap().id;
+    let hook = |event: &str| {
+        let output = fx
+            .command(fx.tmp.path(), &["hook", event])
+            .env("CONDUCTOR_ROLE", "conductor")
+            .env("CONDUCTOR_REPO_ID", &repo_id)
+            .env("HERDR_PANE_ID", "p1")
+            .env("HERDR_WORKSPACE_ID", "w1")
+            .output()
+            .unwrap();
+        assert_success(&output);
+        assert!(output.stdout.is_empty() && output.stderr.is_empty());
+    };
+    let record = || read_repo_record(&fx.repo_dir()).unwrap().unwrap();
+
+    // Only SessionStart touches repo.json in the conductor session.
+    hook("pre-tool-use");
+    assert_eq!(record().herdr_pane_id, None);
+
+    hook("session-start");
+    assert_eq!(record().herdr_pane_id.as_deref(), Some("p1"));
+    assert_eq!(record().herdr_workspace_id.as_deref(), Some("w1"));
+    assert!(!fx.home().join("logs").exists());
+
+    // `init` from a plain terminal keeps both.
+    assert_success(&fx.run(&fx.repo(), &["init"]));
+    assert_eq!(record().herdr_pane_id.as_deref(), Some("p1"));
+    assert_eq!(record().herdr_workspace_id.as_deref(), Some("w1"));
+}
+
+#[test]
+fn conductor_session_start_without_repo_json_logs() {
+    let fx = Fixture::new();
+    let output = fx
+        .command(fx.tmp.path(), &["hook", "session-start"])
+        .env("CONDUCTOR_ROLE", "conductor")
+        .env("CONDUCTOR_REPO_ID", "missing-000000")
+        .output()
+        .unwrap();
     assert_success(&output);
     assert!(output.stdout.is_empty() && output.stderr.is_empty());
+    let log = std::fs::read_to_string(fx.home().join("logs/hook.log")).unwrap();
+    assert!(log.contains("conductor init"), "{log}");
 }
 
 #[test]

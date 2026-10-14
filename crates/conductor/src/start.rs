@@ -13,7 +13,11 @@ const PROMPT: &str = "/conductor:conductor";
 /// `dry_run`, prints the command instead and writes nothing.
 pub fn run(ctx: &Ctx, dry_run: bool) -> anyhow::Result<()> {
     let home = ctx.home.root().to_string_lossy().into_owned();
-    let env = [("CONDUCTOR_ROLE", "conductor"), ("CONDUCTOR_HOME", &home)];
+    let env = [
+        ("CONDUCTOR_ROLE", "conductor"),
+        ("CONDUCTOR_REPO_ID", &ctx.repo.id),
+        ("CONDUCTOR_HOME", &home),
+    ];
     let session = ctx.conductor_session();
     let args = ["-n", &session, "--permission-mode", "auto", PROMPT];
 

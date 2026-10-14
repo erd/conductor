@@ -1,0 +1,26 @@
+{
+  "event": "pre-tool-use",
+  "input": {
+    "session_id": "abc123",
+    "transcript_path": "/Users/me/.claude/projects/-src-my-repo/00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
+    "cwd": "/src/my-repo/.worktrees/fix-login-07",
+    "permission_mode": "auto",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "/src/my-repo/src/lib.rs",
+      "old_string": "a",
+      "new_string": "b",
+      "replace_all": false
+    },
+    "tool_use_id": "toolu_01ABC126"
+  },
+  "expected": {
+    "task": "fix-login-07",
+    "session_id": "abc123",
+    "kind": "tool_start",
+    "tool_name": "Edit",
+    "summary": "/src/my-repo/src/lib.rs",
+    "tool_use_id": "toolu_01ABC126"
+  }
+}
