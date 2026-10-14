@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use std::fmt::Debug;
 
 use conductor_state::{
-    Answer, AnsweredBy, CheckState, Config, Decision, DecisionOption, Event, EventPayload, Phase,
-    PrState, RepoOverrides, RepoRecord, ReviewDecision, SchemaV1, Settings, StatusVerb, Task,
-    TaskKind,
+    Answer, AnsweredBy, CheckState, Config, Decision, DecisionOption, Error, Event, EventPayload,
+    Phase, PrState, RepoOverrides, RepoRecord, ReviewDecision, SchemaV1, Settings, StatusVerb,
+    Task, TaskKind,
 };
 use jiff::{SignedDuration, Timestamp};
 use serde::Serialize;
@@ -646,4 +646,22 @@ fn config_resolve() {
     );
     assert_eq!(config.resolve("quiet-000000"), config.defaults);
     assert_eq!(config.resolve("not-configured-111111"), config.defaults);
+}
+
+#[test]
+fn config_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    assert_eq!(Config::load(&path).unwrap(), Config::default());
+
+    std::fs::write(&path, FULL_CONFIG).unwrap();
+    assert_eq!(Config::load(&path).unwrap(), full_config());
+
+    std::fs::write(&path, "deck_width = \"wide\"").unwrap();
+    let err = Config::load(&path).unwrap_err();
+    assert!(matches!(err, Error::Toml { .. }), "{err}");
+    assert!(
+        err.to_string().starts_with(&path.display().to_string()),
+        "{err}"
+    );
 }

@@ -25,14 +25,16 @@
 //!
 //! [`Home`] finds the state root (`CONDUCTOR_HOME`, else `~/.config/conductor`) and lays out
 //! the paths under it; [`resolve_repo`] gives a repo's id, the same from the main checkout
-//! and from any worktree of it. The writing rules, which avoid any locking:
+//! and from any worktree of it; [`Config::load`] reads `config.toml`, where a missing file
+//! means the defaults. The writing rules, which avoid any locking:
 //!
 //! - `events.jsonl` is only appended to, by [`append_event`]: one JSON line of at most
 //!   [`MAX_EVENT_LINE`] bytes per `write` with `O_APPEND`, so concurrent appenders never
 //!   interleave. Long text fields are cut to [`MAX_TEXT_FIELD`]. [`read_events`] tails it
 //!   from a saved offset.
 //! - `task.json` has one writer, the `conductor` CLI, through [`write_task_atomic`]: a temp
-//!   file, `fsync`, then `rename`.
+//!   file, `fsync`, then `rename`. `repo.json` is written the same way, by
+//!   [`write_repo_record_atomic`].
 //! - The deck writes neither. It computes each card's [`LiveStatus`] with [`fold`].
 //!
 //! # JSON Schema
@@ -66,8 +68,8 @@ pub use phase::Phase;
 pub use repo::RepoRecord;
 pub use schema::{SCHEMA_ID, SchemaV1, json_schema};
 pub use store::{
-    EventBatch, MAX_EVENT_LINE, MAX_TEXT_FIELD, SkippedLine, append_event, read_events, read_task,
-    write_task_atomic,
+    EventBatch, MAX_EVENT_LINE, MAX_TEXT_FIELD, SkippedLine, append_event, read_events,
+    read_repo_record, read_task, task_ids, write_repo_record_atomic, write_task_atomic,
 };
 pub use task::{Task, TaskKind};
 

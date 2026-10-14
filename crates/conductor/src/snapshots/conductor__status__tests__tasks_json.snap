@@ -1,0 +1,52 @@
+---
+source: crates/conductor/src/status.rs
+expression: render_json(&rows).unwrap()
+---
+[
+  {
+    "id": "add-docs-02",
+    "title": "Document the deploy process",
+    "kind": "ship",
+    "phase": "awaiting_merge",
+    "activity": "idle",
+    "since": "2026-10-14T09:15:00Z",
+    "branch": "conductor/add-docs-02",
+    "pr_url": "https://github.com/erd/web/pull/42",
+    "pr": {
+      "state": "open",
+      "checks": "pass",
+      "review": "approved"
+    }
+  },
+  {
+    "id": "fix-login-07",
+    "title": "Fix login redirect loop",
+    "kind": "ship",
+    "phase": "working",
+    "activity": "working",
+    "detail": "Edit src/login.rs",
+    "since": "2026-10-14T12:00:01Z",
+    "branch": "conductor/fix-login-07"
+  },
+  {
+    "id": "pick-db-03",
+    "title": "Pick a database for the analytics pipeline and migrate the existing tables",
+    "kind": "ship",
+    "phase": "needs_decision",
+    "activity": "needs_permission",
+    "detail": "Claude needs your permission to use Bash",
+    "open_decisions": [
+      "database"
+    ],
+    "since": "2026-10-14T12:27:31Z",
+    "branch": "conductor/pick-db-03"
+  },
+  {
+    "id": "rate-limit-08",
+    "title": "Rate-limit the signup endpoint",
+    "kind": "ship",
+    "phase": "briefed",
+    "activity": "not_started",
+    "since": "2026-10-14T12:25:00Z"
+  }
+]
