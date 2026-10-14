@@ -1,0 +1,4 @@
+{"ts":"2026-10-14T12:00:00Z","task":"fix-login-07","session_id":"s1","kind":"session_start","source":"startup","herdr_pane_id":"p1","herdr_workspace_id":"w1","transcript_path":"/tmp/s1.jsonl"}
+{"ts":"2026-10-14T12:00:01Z","task":"fix-login-07","session_id":"s1","kind":"prompt","text":"Read your brief at /b/brief.md and follow the worker skill."}
+{"ts":"2026-10-14T12:10:00Z","task":"fix-login-07","session_id":"s1","kind":"session_end","reason":"other"}
+{"ts":"2026-10-14T13:00:00Z","task":"fix-login-07","session_id":"s2","kind":"session_start","source":"resume","herdr_pane_id":"p2","herdr_workspace_id":"w2"}
