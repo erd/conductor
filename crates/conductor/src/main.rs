@@ -1,14 +1,19 @@
 mod context;
+mod decision;
 mod hook;
 mod init;
+mod report;
 mod start;
 mod status;
+mod table;
 
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 
 use crate::context::Ctx;
+use crate::decision::DecisionCommand;
+use crate::report::ReportArgs;
 
 /// Multi-agent orchestrator for Claude Code and herdr.
 ///
@@ -49,10 +54,15 @@ enum Command {
     /// Does nothing unless `CONDUCTOR_TASK_ID` or `CONDUCTOR_ROLE` is set. Always exits 0 and
     /// prints nothing; errors go to `logs/hook.log` in the state dir.
     Hook(HookArgs),
-    /// Report a worker's progress. Not implemented yet.
-    Report(Stub),
-    /// Open or answer a decision. Not implemented yet.
-    Decision(Stub),
+    /// Report a worker's progress: append a `status` event to the task's log.
+    ///
+    /// The task comes from `--task`, else `CONDUCTOR_TASK_ID`.
+    Report(ReportArgs),
+    /// Open, answer or list a task's decisions.
+    Decision {
+        #[command(subcommand)]
+        command: DecisionCommand,
+    },
     /// Create tasks and move them between phases. Not implemented yet.
     Task(Stub),
     /// Create a task's worktree, herdr workspace and worker session. Not implemented yet.
@@ -101,8 +111,8 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Status { json, all } => status::run(&Ctx::from_cwd()?, *json, *all)?,
         // The plugin's hook shim runs this in every Claude session, so it must never fail.
         Command::Hook(args) => hook::run(args.event.as_deref()),
-        Command::Report(_) => return Ok(not_implemented("report")),
-        Command::Decision(_) => return Ok(not_implemented("decision")),
+        Command::Report(args) => report::run(args)?,
+        Command::Decision { command } => decision::run(command)?,
         Command::Task(_) => return Ok(not_implemented("task")),
         Command::Spawn(_) => return Ok(not_implemented("spawn")),
         Command::Teardown(_) => return Ok(not_implemented("teardown")),
