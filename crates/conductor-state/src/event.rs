@@ -21,6 +21,41 @@ pub struct Event {
     pub payload: EventPayload,
 }
 
+impl Event {
+    /// Cuts each free-text field down to at most `max` bytes, ending a cut field with `…`.
+    /// Identifiers and paths are left alone.
+    pub(crate) fn truncate_text(&mut self, max: usize) {
+        let field = match &mut self.payload {
+            EventPayload::Prompt { text } | EventPayload::Attention { message: text, .. } => {
+                Some(text)
+            }
+            EventPayload::SessionEnd { reason } => Some(reason),
+            EventPayload::ToolStart { summary, .. } | EventPayload::ToolEnd { summary, .. } => {
+                summary.as_mut()
+            }
+            EventPayload::TurnEnd { error } => error.as_mut(),
+            EventPayload::Status { text, .. } => text.as_mut(),
+            _ => None,
+        };
+        if let Some(field) = field {
+            truncate(field, max);
+        }
+    }
+}
+
+fn truncate(s: &mut String, max: usize) {
+    const ELLIPSIS: &str = "…";
+    if s.len() <= max {
+        return;
+    }
+    let mut end = max.saturating_sub(ELLIPSIS.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    s.push_str(ELLIPSIS);
+}
+
 /// The `kind`-specific part of an [`Event`].
 ///
 /// Deserializing an unknown `kind` gives [`EventPayload::Unknown`]; a known `kind` with a
@@ -199,4 +234,48 @@ pub enum ReviewDecision {
     Approved,
     ChangesRequested,
     ReviewRequired,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prompt(text: &str) -> Event {
+        Event {
+            ts: "2026-10-14T12:00:00Z".parse().unwrap(),
+            task: "t".into(),
+            session_id: None,
+            payload: EventPayload::Prompt { text: text.into() },
+        }
+    }
+
+    fn text(event: &Event) -> &str {
+        match &event.payload {
+            EventPayload::Prompt { text } => text,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn short_text_is_untouched() {
+        let mut event = prompt("hello");
+        event.truncate_text(5);
+        assert_eq!(text(&event), "hello");
+    }
+
+    #[test]
+    fn long_text_is_cut_with_ellipsis() {
+        let mut event = prompt("abcdefghij");
+        event.truncate_text(8);
+        assert_eq!(text(&event), "abcde…");
+        assert!(text(&event).len() <= 8);
+    }
+
+    #[test]
+    fn cut_lands_on_char_boundary() {
+        // Each 'é' is two bytes, so a cut at byte 5 must back up to 4.
+        let mut event = prompt("éééééé");
+        event.truncate_text(8);
+        assert_eq!(text(&event), "éé…");
+    }
 }

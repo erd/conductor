@@ -1,0 +1,9 @@
+{"ts":"2026-10-14T12:00:00Z","task":"fix-login-07","session_id":"s1","kind":"session_start","source":"startup","herdr_pane_id":"p1","herdr_workspace_id":"w1","transcript_path":"/tmp/s1.jsonl"}
+{"ts":"2026-10-14T12:00:01Z","task":"fix-login-07","session_id":"s1","kind":"prompt","text":"Read your brief at /b/brief.md and follow the worker skill."}
+{"ts":"2026-10-14T12:05:00Z","task":"fix-login-07","session_id":"s1","kind":"status","verb":"done","pr_url":"https://github.com/erd/web/pull/42"}
+{"ts":"2026-10-14T12:06:00Z","task":"fix-login-07","kind":"pr","state":"draft","checks":"pending"}
+{"ts":"2026-10-14T12:08:00Z","task":"fix-login-07","kind":"phase","from":"review","to":"awaiting_merge"}
+{"ts":"2026-10-14T12:08:00Z","task":"fix-login-07","kind":"pr","state":"open","checks":"fail","review":"review_required"}
+{"ts":"2026-10-14T12:20:00Z","task":"fix-login-07","kind":"pr","state":"open","checks":"pass","review":"changes_requested"}
+{"ts":"2026-10-14T12:40:00Z","task":"fix-login-07","kind":"pr","state":"open","checks":"pass","review":"approved"}
+{"ts":"2026-10-14T13:00:00Z","task":"fix-login-07","kind":"pr","state":"merged","checks":"pass","review":"approved"}
