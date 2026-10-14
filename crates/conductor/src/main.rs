@@ -1,4 +1,5 @@
 mod context;
+mod hook;
 mod init;
 mod start;
 mod status;
@@ -43,8 +44,11 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Record a Claude Code hook event (run by the plugin's hooks). Not implemented yet.
-    Hook(Stub),
+    /// Record a Claude Code hook event (run by the plugin's hooks).
+    ///
+    /// Does nothing unless `CONDUCTOR_TASK_ID` or `CONDUCTOR_ROLE` is set. Always exits 0 and
+    /// prints nothing; errors go to `logs/hook.log` in the state dir.
+    Hook(HookArgs),
     /// Report a worker's progress. Not implemented yet.
     Report(Stub),
     /// Open or answer a decision. Not implemented yet.
@@ -59,6 +63,15 @@ enum Command {
     Watch(Stub),
     /// Reopen the workspaces and sessions of live tasks. Not implemented yet.
     Resume(Stub),
+}
+
+#[derive(Args)]
+struct HookArgs {
+    /// The hook event, e.g. `session-start` or `pre-tool-use`.
+    event: Option<String>,
+    /// Ignored, so an unexpected argument can't make the hook fail.
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    _rest: Vec<String>,
 }
 
 /// Arguments for a command that isn't implemented yet; its own issue defines them.
@@ -87,7 +100,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Start { dry_run } => start::run(&Ctx::from_cwd()?, *dry_run)?,
         Command::Status { json, all } => status::run(&Ctx::from_cwd()?, *json, *all)?,
         // The plugin's hook shim runs this in every Claude session, so it must never fail.
-        Command::Hook(_) => {}
+        Command::Hook(args) => hook::run(args.event.as_deref()),
         Command::Report(_) => return Ok(not_implemented("report")),
         Command::Decision(_) => return Ok(not_implemented("decision")),
         Command::Task(_) => return Ok(not_implemented("task")),

@@ -81,6 +81,7 @@ fn repo_record_round_trips() {
         repo_id: "web-3f9a1c".into(),
         conductor_session: "conductor-web".into(),
         herdr_workspace_id: Some("w1".into()),
+        herdr_pane_id: Some("p1".into()),
     };
     write_repo_record_atomic(dir.path(), &record).unwrap();
     assert_eq!(read_repo_record(dir.path()).unwrap(), Some(record));
