@@ -1,0 +1,10 @@
+{
+  "schema": "conductor-state.v1",
+  "id": "audit-deps-01",
+  "title": "Audit outdated dependencies",
+  "kind": "scout",
+  "phase": "torn_down",
+  "branch": "conductor/audit-deps-01",
+  "created_at": "2026-10-12T15:00:00Z",
+  "updated_at": "2026-10-12T17:00:00Z"
+}

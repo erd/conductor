@@ -1,0 +1,4 @@
+{"ts":"2026-10-12T15:01:00Z","task":"audit-deps-01","session_id":"s0","kind":"session_start","source":"startup","herdr_pane_id":"p0","herdr_workspace_id":"w0"}
+{"ts":"2026-10-12T15:01:01Z","task":"audit-deps-01","session_id":"s0","kind":"prompt","text":"Read your brief and follow the worker skill."}
+{"ts":"2026-10-12T16:40:00Z","task":"audit-deps-01","session_id":"s0","kind":"status","verb":"done","text":"report.md written"}
+{"ts":"2026-10-12T16:58:00Z","task":"audit-deps-01","session_id":"s0","kind":"session_end","reason":"other"}

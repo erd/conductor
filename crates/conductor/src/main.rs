@@ -1,13 +1,105 @@
-use clap::Parser;
+mod context;
+mod init;
+mod start;
+mod status;
+
+use std::process::ExitCode;
+
+use clap::{Args, Parser, Subcommand};
+
+use crate::context::Ctx;
 
 /// Multi-agent orchestrator for Claude Code and herdr.
+///
+/// Works from anywhere inside a repo's main checkout or one of its worktrees; state lives in
+/// `$CONDUCTOR_HOME`, else `~/.config/conductor`.
 #[derive(Parser)]
 #[command(version, about, arg_required_else_help = true)]
 struct Cli {
-    // Subcommands (`hook`, `report`, `decision`, `task`, `spawn`, ...) go here as a
-    // `#[command(subcommand)]` field.
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn main() {
-    let _cli = Cli::parse();
+#[derive(Subcommand)]
+enum Command {
+    /// Create or refresh this repo's `repo.json` and print its path.
+    Init,
+    /// Start this repo's conductor session in Claude Code.
+    ///
+    /// Runs `init`, then replaces this process with `claude`, run from the repo's main
+    /// checkout.
+    Start {
+        /// Print the `claude` command and its environment instead of running it. Writes
+        /// nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show this repo's tasks: phase, live activity, time in that activity, branch and PR.
+    Status {
+        /// Print a JSON array instead of a table.
+        #[arg(long)]
+        json: bool,
+        /// Include torn-down tasks.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Record a Claude Code hook event (run by the plugin's hooks). Not implemented yet.
+    Hook(Stub),
+    /// Report a worker's progress. Not implemented yet.
+    Report(Stub),
+    /// Open or answer a decision. Not implemented yet.
+    Decision(Stub),
+    /// Create tasks and move them between phases. Not implemented yet.
+    Task(Stub),
+    /// Create a task's worktree, herdr workspace and worker session. Not implemented yet.
+    Spawn(Stub),
+    /// Remove a finished task's worktree, session and workspace. Not implemented yet.
+    Teardown(Stub),
+    /// Follow every task and wake the conductor when one needs it. Not implemented yet.
+    Watch(Stub),
+    /// Reopen the workspaces and sessions of live tasks. Not implemented yet.
+    Resume(Stub),
+}
+
+/// Arguments for a command that isn't implemented yet; its own issue defines them.
+#[derive(Args)]
+struct Stub {
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    _args: Vec<String>,
+}
+
+fn main() -> ExitCode {
+    match run(&Cli::parse().command) {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("conductor: {err:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(command: &Command) -> anyhow::Result<ExitCode> {
+    match command {
+        Command::Init => {
+            let path = init::run(&Ctx::from_cwd()?)?;
+            println!("{}", path.display());
+        }
+        Command::Start { dry_run } => start::run(&Ctx::from_cwd()?, *dry_run)?,
+        Command::Status { json, all } => status::run(&Ctx::from_cwd()?, *json, *all)?,
+        // The plugin's hook shim runs this in every Claude session, so it must never fail.
+        Command::Hook(_) => {}
+        Command::Report(_) => return Ok(not_implemented("report")),
+        Command::Decision(_) => return Ok(not_implemented("decision")),
+        Command::Task(_) => return Ok(not_implemented("task")),
+        Command::Spawn(_) => return Ok(not_implemented("spawn")),
+        Command::Teardown(_) => return Ok(not_implemented("teardown")),
+        Command::Watch(_) => return Ok(not_implemented("watch")),
+        Command::Resume(_) => return Ok(not_implemented("resume")),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn not_implemented(name: &str) -> ExitCode {
+    eprintln!("conductor: `conductor {name}` is not implemented yet");
+    ExitCode::FAILURE
 }

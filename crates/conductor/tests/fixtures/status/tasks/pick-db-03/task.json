@@ -1,0 +1,10 @@
+{
+  "schema": "conductor-state.v1",
+  "id": "pick-db-03",
+  "title": "Pick a database for the analytics pipeline and migrate the existing tables",
+  "kind": "ship",
+  "phase": "needs_decision",
+  "branch": "conductor/pick-db-03",
+  "created_at": "2026-10-14T11:56:00Z",
+  "updated_at": "2026-10-14T12:15:00Z"
+}

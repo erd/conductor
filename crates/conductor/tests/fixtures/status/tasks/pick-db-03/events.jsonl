@@ -1,0 +1,5 @@
+{"ts":"2026-10-14T12:00:00Z","task":"pick-db-03","session_id":"s2","kind":"session_start","source":"startup","herdr_pane_id":"p2","herdr_workspace_id":"w2"}
+{"ts":"2026-10-14T12:00:01Z","task":"pick-db-03","session_id":"s2","kind":"prompt","text":"Read your brief and follow the worker skill."}
+{"ts":"2026-10-14T12:15:00Z","task":"pick-db-03","session_id":"s2","kind":"decision_open","key":"database"}
+{"ts":"2026-10-14T12:27:30Z","task":"pick-db-03","session_id":"s2","kind":"tool_start","tool_name":"Bash","summary":"rm -rf target","tool_use_id":"tu3"}
+{"ts":"2026-10-14T12:27:31Z","task":"pick-db-03","session_id":"s2","kind":"attention","type":"permission_prompt","message":"Claude needs your permission to use Bash"}

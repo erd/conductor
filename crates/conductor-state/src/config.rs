@@ -1,8 +1,12 @@
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
+use std::path::Path;
 
 use jiff::SignedDuration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::{Error, Result};
 
 /// `config.toml`: global defaults, plus optional per-repo overrides under
 /// `[repos."<repo-id>"]`. Use [`Config::resolve`] to get the settings for one repo.
@@ -67,6 +71,23 @@ pub struct RepoOverrides {
 }
 
 impl Config {
+    /// Reads `config.toml` at `path`. A missing file gives the defaults.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] if it can't be read, and [`Error::Toml`] if it doesn't parse.
+    pub fn load(path: &Path) -> Result<Self> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(Error::io(path)(e)),
+        };
+        toml::from_str(&text).map_err(|source| Error::Toml {
+            path: path.to_owned(),
+            source,
+        })
+    }
+
     /// The settings for `repo_id`: its overrides where set, the global defaults otherwise.
     #[must_use]
     pub fn resolve(&self, repo_id: &str) -> Settings {
