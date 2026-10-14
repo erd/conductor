@@ -469,7 +469,7 @@ fn decision_defaults() {
         "about": "",
     });
     let decision: Decision = serde_json::from_value(doc).unwrap();
-    assert!(decision.options.is_empty());
+    assert_eq!(decision.options, []);
     assert!(!decision.allow_freeform);
     assert_eq!(decision.recommend, None);
 }
