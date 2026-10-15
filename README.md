@@ -35,7 +35,8 @@ when one needs it. See [docs/design.md](docs/design.md).
 
 The plugin is installed at user scope, so its hooks run in every Claude session. They do
 nothing outside conductor sessions. If the CLI isn't in `~/.cargo/bin`, set `CONDUCTOR_BIN` to
-its path.
+its path. The plugin also provides the `worker` skill, which every worker session follows: how
+to report progress, raise decisions, and deliver a draft PR or a report.
 
 ## Usage
 
