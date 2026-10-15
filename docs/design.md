@@ -226,15 +226,26 @@ stateDiagram-v2
    (`ship` | `scout`), and worker rules (the `worker` skill, plus the task id,
    branch and session names). The conductor fills in the rest, then runs
    `conductor task phase <task> briefed`.
-3. **Spawn.** Run `conductor spawn <task>`. It:
+3. **Spawn.** Run `conductor spawn <task>` on a `briefed` task. It moves the
+   task to `spawning`, then:
    1. runs `wt -C <repo> switch --create <branch> --no-cd --format=json` and
       records `path` and `branch`;
    2. runs `herdr worktree open --cwd <repo-root> --path <path> --label
       <task> --no-focus --json`, which folds the new workspace under the
       conductor's, and records the workspace and pane ids;
-   3. runs `herdr pane run <pane> "CONDUCTOR_TASK_ID=<task>
+   3. runs `herdr pane run <pane> "env CONDUCTOR_TASK_ID=<task>
       CONDUCTOR_REPO_ID=<repo-id> CONDUCTOR_HOME=… claude -n <repo>-<task> --permission-mode auto 'Read
-      your brief at <path> and follow the worker skill.'"`.
+      your brief at <path> and follow the conductor worker skill.'"`, adding
+      `--model`/`--effort` when config sets them. The line goes through `env`,
+      and its quoting keeps backslashes out of single quotes, so it reads the
+      same in bash, zsh and fish.
+
+   It writes everything to `task.json` in one go and moves the task to
+   `working`. If a step fails, the task moves to `failed` instead, with the
+   error in a `status` event, and `task.json` records only what was actually
+   created so teardown can remove it. Spawn refuses a task that already has a
+   pane, and a branch that already exists unless given `--reuse-branch`.
+   `--dry-run` prints the commands without running them.
 4. **Supervise.** Wake on worker messages and on events (see [Waking the
    conductor](#waking-the-conductor)). Answer decisions the conductor can
    resolve itself. Pass the rest to me as decision files, which the deck

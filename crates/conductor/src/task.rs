@@ -157,18 +157,13 @@ fn new(ctx: &Ctx, args: &NewArgs) -> anyhow::Result<()> {
     };
 
     let kind = TaskKind::from(args.kind);
-    let repo_name = ctx
-        .repo
-        .root
-        .file_name()
-        .map_or_else(|| "repo".into(), |n| n.to_string_lossy());
     let brief = render_brief(&Brief {
         title,
         id: &id,
         kind,
         intent: args.intent.as_deref(),
         branch: &format!("{}{id}", ctx.settings.branch_prefix),
-        worker_session: &format!("{repo_name}-{id}"),
+        worker_session: &ctx.worker_session(&id),
         conductor_session: &ctx.conductor_session(),
     });
     // The brief goes first, so a task that `status` can read always has one.
@@ -221,17 +216,23 @@ fn set_phase(repo: &RepoArg, id: &str, to: Phase, force: bool) -> anyhow::Result
         }
         eprintln!("conductor: warning: forcing {id} from {from_name} to {to_name}");
     }
+    move_phase(&task_dir, &mut task, to)
+}
 
+/// Moves `task` to phase `to` without checking the lifecycle: writes `task.json`, with any other
+/// changes made to `task`, then appends the `phase` event.
+pub fn move_phase(task_dir: &Path, task: &mut Task, to: Phase) -> anyhow::Result<()> {
+    let from = task.phase;
     task.phase = to;
     task.updated_at = Timestamp::now();
-    write_task_atomic(&task_dir, &task)?;
+    write_task_atomic(task_dir, task)?;
     let event = Event {
         ts: task.updated_at,
-        task: id.to_owned(),
+        task: task.id.clone(),
         session_id: None,
         payload: EventPayload::Phase { from, to },
     };
-    append_event(&task_dir, &event)?;
+    append_event(task_dir, &event)?;
     Ok(())
 }
 

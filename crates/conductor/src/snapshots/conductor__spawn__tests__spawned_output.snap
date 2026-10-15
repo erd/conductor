@@ -1,0 +1,10 @@
+---
+source: crates/conductor/src/spawn.rs
+expression: out
+---
+fix-login-07
+session    my-repo-fix-login-07
+branch     conductor/fix-login-07
+worktree   /src/my-repo/.worktrees/conductor-fix-login-07
+workspace  w9
+pane       w9:p1

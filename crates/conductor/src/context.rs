@@ -32,14 +32,22 @@ impl Ctx {
         self.home.repo_dir(&self.repo.id)
     }
 
-    /// The conductor's Claude session name, `conductor-<repo dir name>`.
-    pub fn conductor_session(&self) -> String {
-        let name = self
-            .repo
+    /// The repo's main checkout directory name, which session names are built from.
+    pub fn repo_name(&self) -> String {
+        self.repo
             .root
             .file_name()
-            .map_or_else(|| "repo".into(), |n| n.to_string_lossy());
-        format!("conductor-{name}")
+            .map_or_else(|| "repo".into(), |n| n.to_string_lossy().into_owned())
+    }
+
+    /// The conductor's Claude session name, `conductor-<repo dir name>`.
+    pub fn conductor_session(&self) -> String {
+        format!("conductor-{}", self.repo_name())
+    }
+
+    /// A worker's Claude session name, `<repo dir name>-<task id>`.
+    pub fn worker_session(&self, task_id: &str) -> String {
+        format!("{}-{task_id}", self.repo_name())
     }
 }
 

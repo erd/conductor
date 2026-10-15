@@ -1,0 +1,5 @@
+---
+source: crates/conductor/src/spawn.rs
+expression: "argvs[3][4].replace(&fx.home(), \"<home>\")"
+---
+env CONDUCTOR_TASK_ID=fix-login-07 CONDUCTOR_REPO_ID=my-repo-abc123 CONDUCTOR_HOME=<home> claude -n my-repo-fix-login-07 --permission-mode auto 'Read your brief at <home>/repos/my-repo-abc123/tasks/fix-login-07/brief.md and follow the conductor worker skill.'

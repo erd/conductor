@@ -1,0 +1,7 @@
+---
+source: crates/conductor/src/spawn.rs
+expression: out
+---
+wt -C /src/my-repo switch --create conductor/fix-login-07 --no-cd --format=json
+herdr worktree open --cwd /src/my-repo --path '<path>' --label fix-login-07 --no-focus --json
+herdr pane run '<pane>' 'env CONDUCTOR_TASK_ID=fix-login-07 CONDUCTOR_REPO_ID=my-repo-abc123 CONDUCTOR_HOME=<home> claude -n my-repo-fix-login-07 --permission-mode auto '\''Read your brief at <home>/repos/my-repo-abc123/tasks/fix-login-07/brief.md and follow the conductor worker skill.'\'''
