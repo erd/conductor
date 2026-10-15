@@ -10,6 +10,7 @@ mod start;
 mod status;
 mod table;
 mod task;
+mod teardown;
 
 use std::process::ExitCode;
 
@@ -20,6 +21,7 @@ use crate::decision::DecisionCommand;
 use crate::report::ReportArgs;
 use crate::spawn::SpawnArgs;
 use crate::task::TaskCommand;
+use crate::teardown::TeardownArgs;
 
 /// Multi-agent orchestrator for Claude Code and herdr.
 ///
@@ -80,8 +82,14 @@ enum Command {
     /// Moves the task to `working`, recording the branch, worktree, session, workspace and pane
     /// in `task.json`; if a step fails, moves it to `failed` instead. Run from the repo.
     Spawn(SpawnArgs),
-    /// Remove a finished task's worktree, session and workspace. Not implemented yet.
-    Teardown(Stub),
+    /// Remove a finished task's worker, worktree, branch and workspace.
+    ///
+    /// A ship task's PR must be merged on GitHub. First pulls the default branch in the main
+    /// checkout (or fetches, if it isn't checked out there and clean), so worktrunk can see the
+    /// branch merged. Then stops the worker, removes the worktree and branch, closes the herdr
+    /// workspace, and moves the task to `torn_down`, or `abandoned` with `--abandon`. If a step
+    /// fails, rerunning continues from it. Run from the repo.
+    Teardown(TeardownArgs),
     /// Follow every task and wake the conductor when one needs it. Not implemented yet.
     Watch(Stub),
     /// Reopen the workspaces and sessions of live tasks. Not implemented yet.
@@ -128,7 +136,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Decision { command } => decision::run(command)?,
         Command::Task { command } => task::run(command)?,
         Command::Spawn(args) => spawn::run(args)?,
-        Command::Teardown(_) => return Ok(not_implemented("teardown")),
+        Command::Teardown(args) => teardown::run(args)?,
         Command::Watch(_) => return Ok(not_implemented("watch")),
         Command::Resume(_) => return Ok(not_implemented("resume")),
     }
