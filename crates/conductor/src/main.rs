@@ -3,6 +3,9 @@ mod decision;
 mod hook;
 mod init;
 mod report;
+mod runner;
+mod shell;
+mod spawn;
 mod start;
 mod status;
 mod table;
@@ -15,6 +18,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::context::Ctx;
 use crate::decision::DecisionCommand;
 use crate::report::ReportArgs;
+use crate::spawn::SpawnArgs;
 use crate::task::TaskCommand;
 
 /// Multi-agent orchestrator for Claude Code and herdr.
@@ -70,8 +74,12 @@ enum Command {
         #[command(subcommand)]
         command: TaskCommand,
     },
-    /// Create a task's worktree, herdr workspace and worker session. Not implemented yet.
-    Spawn(Stub),
+    /// Start a briefed task's worker: create its worktree, open a herdr workspace for it, and run
+    /// its Claude session there.
+    ///
+    /// Moves the task to `working`, recording the branch, worktree, session, workspace and pane
+    /// in `task.json`; if a step fails, moves it to `failed` instead. Run from the repo.
+    Spawn(SpawnArgs),
     /// Remove a finished task's worktree, session and workspace. Not implemented yet.
     Teardown(Stub),
     /// Follow every task and wake the conductor when one needs it. Not implemented yet.
@@ -119,7 +127,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Report(args) => report::run(args)?,
         Command::Decision { command } => decision::run(command)?,
         Command::Task { command } => task::run(command)?,
-        Command::Spawn(_) => return Ok(not_implemented("spawn")),
+        Command::Spawn(args) => spawn::run(args)?,
         Command::Teardown(_) => return Ok(not_implemented("teardown")),
         Command::Watch(_) => return Ok(not_implemented("watch")),
         Command::Resume(_) => return Ok(not_implemented("resume")),

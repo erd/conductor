@@ -316,7 +316,7 @@ fn bad_config_fails_and_names_the_file() {
 #[test]
 fn stubs_are_not_implemented_yet() {
     let fx = Fixture::new();
-    for name in ["spawn", "teardown", "watch", "resume"] {
+    for name in ["teardown", "watch", "resume"] {
         let output = fx.run(&fx.repo(), &[name, "some", "--args"]);
         assert_eq!(output.status.code(), Some(1), "{name}");
         assert_eq!(
@@ -609,4 +609,61 @@ fn task_show_and_list() {
     );
     let output = fx.run(&fx.repo(), &["task", "show", "../x"]);
     assert_eq!(stderr(&output), "conductor: invalid task id \"../x\"\n");
+}
+
+#[test]
+fn spawn_dry_run_prints_commands_and_changes_nothing() {
+    let fx = Fixture::new();
+    let id = fx.new_task("Fix login", "ship");
+    assert_success(&fx.run(&fx.repo(), &["task", "phase", &id, "briefed"]));
+    let before = fx.task(&id);
+
+    // From the conductor's environment: the herdr binary comes from HERDR_BIN_PATH.
+    let output = fx
+        .command(&fx.worktree(), &["spawn", &id, "--dry-run"])
+        .env("HERDR_BIN_PATH", "/opt/herdr/bin/herdr")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let root = fx.repo().canonicalize().unwrap();
+    let out = stdout(&output);
+    let lines: Vec<_> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert_eq!(
+        lines[0],
+        format!(
+            "wt -C {} switch --create conductor/{id} --no-cd --format=json",
+            root.display()
+        )
+    );
+    assert!(
+        lines[1].starts_with(&format!(
+            "/opt/herdr/bin/herdr worktree open --cwd {} --path '<path>'",
+            root.display()
+        )),
+        "{out}"
+    );
+    assert!(
+        lines[2].starts_with("/opt/herdr/bin/herdr pane run '<pane>' 'env CONDUCTOR_TASK_ID="),
+        "{out}"
+    );
+    assert!(
+        lines[2].contains(" claude -n my-repo-fix-login-01 "),
+        "{out}"
+    );
+    assert_eq!(fx.task(&id), before);
+    assert_eq!(fx.phase_events(&id), [(Phase::Intake, Phase::Briefed)]);
+}
+
+#[test]
+fn spawn_needs_a_briefed_task() {
+    let fx = Fixture::new();
+    let id = fx.new_task("Fix login", "ship");
+    let output = fx.run(&fx.repo(), &["spawn", &id]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        format!("conductor: {id} is intake; spawn needs briefed\n")
+    );
+    assert_eq!(fx.task(&id).phase, Phase::Intake);
 }
