@@ -18,13 +18,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::context::{Ctx, Target};
-use crate::runner::{Cmd, RunOutput, Runner, System, Tools};
+use crate::runner::{Cmd, Runner, System, Tools, check, check_wt, failure, parse_json};
 use crate::shell;
 use crate::status::snake_case;
 use crate::task::move_phase;
-
-/// What `wt switch` prints when a repo has project hooks the user hasn't approved.
-const WT_NEEDS_APPROVAL: &str = "Cannot prompt for approval in non-interactive environment";
 
 #[derive(Args)]
 pub struct SpawnArgs {
@@ -150,15 +147,7 @@ fn run_steps(
     worker: &str,
     created: &mut Created,
 ) -> anyhow::Result<()> {
-    let output = runner.run(wt)?;
-    if !output.success() && output.stderr.contains(WT_NEEDS_APPROVAL) {
-        bail!(
-            "{}\nRun: wt -C {} config approvals add",
-            output.stderr.trim(),
-            shell::quote(&root.to_string_lossy())
-        );
-    }
-    let output = check("wt switch", output)?;
+    let output = check_wt("wt switch", runner.run(wt)?, root)?;
     let switch: WtSwitch = parse_json(&output.stdout).context("unexpected `wt switch` output")?;
     created.branch = Some(switch.branch);
     created.worktree_path = Some(switch.path.clone());
@@ -261,40 +250,6 @@ fn worker_command(ctx: &Ctx, id: &str, session: &str, brief: &Path) -> anyhow::R
     Ok(shell::join(&words))
 }
 
-/// `output` if its command succeeded, else an error naming `what` with its stderr.
-fn check(what: &str, output: RunOutput) -> anyhow::Result<RunOutput> {
-    if output.success() {
-        Ok(output)
-    } else {
-        Err(failure(what, &output))
-    }
-}
-
-fn failure(what: &str, output: &RunOutput) -> anyhow::Error {
-    let code = output
-        .code
-        .map_or_else(|| "a signal".to_owned(), |c| format!("exit {c}"));
-    let stderr = output.stderr.trim();
-    if stderr.is_empty() {
-        anyhow!("`{what}` failed ({code})")
-    } else {
-        anyhow!("`{what}` failed ({code}): {stderr}")
-    }
-}
-
-/// Parses `stdout` as JSON, falling back to its last non-empty line in case something else was
-/// printed before it.
-fn parse_json<T: for<'de> Deserialize<'de>>(stdout: &str) -> anyhow::Result<T> {
-    serde_json::from_str(stdout.trim()).or_else(|err| {
-        stdout
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .and_then(|line| serde_json::from_str(line).ok())
-            .ok_or_else(|| anyhow!("{err}: {:?}", stdout.trim()))
-    })
-}
-
 fn print_spawned(out: &mut dyn Write, task: &Task) -> anyhow::Result<()> {
     let show = |v: &Option<String>| v.clone().unwrap_or_default();
     writeln!(out, "{}", task.id)?;
@@ -316,7 +271,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::runner::Fake;
+    use crate::runner::{Fake, WT_NEEDS_APPROVAL};
 
     const ID: &str = "fix-login-07";
     const ROOT: &str = "/src/my-repo";

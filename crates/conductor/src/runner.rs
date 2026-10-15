@@ -1,10 +1,11 @@
 //! Running the external tools conductor drives (`wt`, `herdr`, `git`, `gh`) behind a trait, so
 //! commands that orchestrate them can be tested against a [`Fake`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow, bail};
+use serde::Deserialize;
 
 use crate::context::env_var;
 use crate::shell;
@@ -69,6 +70,57 @@ impl RunOutput {
     pub fn success(&self) -> bool {
         self.code == Some(0)
     }
+}
+
+/// What `wt` prints when a repo has project hooks the user hasn't approved.
+pub const WT_NEEDS_APPROVAL: &str = "Cannot prompt for approval in non-interactive environment";
+
+/// `output` if its command succeeded, else an error naming `what` with its stderr.
+pub fn check(what: &str, output: RunOutput) -> anyhow::Result<RunOutput> {
+    if output.success() {
+        Ok(output)
+    } else {
+        Err(failure(what, &output))
+    }
+}
+
+/// [`check`] for a `wt` command run with `-C root`, adding how to approve the repo's project
+/// hooks when that's why it failed.
+pub fn check_wt(what: &str, output: RunOutput, root: &Path) -> anyhow::Result<RunOutput> {
+    if !output.success() && output.stderr.contains(WT_NEEDS_APPROVAL) {
+        bail!(
+            "{}\nRun: wt -C {} config approvals add",
+            output.stderr.trim(),
+            shell::quote(&root.to_string_lossy())
+        );
+    }
+    check(what, output)
+}
+
+/// An error naming `what`, how it exited and its stderr.
+pub fn failure(what: &str, output: &RunOutput) -> anyhow::Error {
+    let code = output
+        .code
+        .map_or_else(|| "a signal".to_owned(), |c| format!("exit {c}"));
+    let stderr = output.stderr.trim();
+    if stderr.is_empty() {
+        anyhow!("`{what}` failed ({code})")
+    } else {
+        anyhow!("`{what}` failed ({code}): {stderr}")
+    }
+}
+
+/// Parses `stdout` as JSON, falling back to its last non-empty line in case something else was
+/// printed before it.
+pub fn parse_json<T: for<'de> Deserialize<'de>>(stdout: &str) -> anyhow::Result<T> {
+    serde_json::from_str(stdout.trim()).or_else(|err| {
+        stdout
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .and_then(|line| serde_json::from_str(line).ok())
+            .ok_or_else(|| anyhow!("{err}: {:?}", stdout.trim()))
+    })
 }
 
 /// Runs [`Cmd`]s and waits for them.
