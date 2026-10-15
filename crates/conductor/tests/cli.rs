@@ -316,7 +316,7 @@ fn bad_config_fails_and_names_the_file() {
 #[test]
 fn stubs_are_not_implemented_yet() {
     let fx = Fixture::new();
-    for name in ["teardown", "watch", "resume"] {
+    for name in ["watch", "resume"] {
         let output = fx.run(&fx.repo(), &[name, "some", "--args"]);
         assert_eq!(output.status.code(), Some(1), "{name}");
         assert_eq!(
