@@ -220,9 +220,12 @@ stateDiagram-v2
    only about ambiguity that would block the work. Classify each task:
    - *ship*: produces a change.
    - *scout*: produces `report.md` and no change.
-2. **Brief.** Write `brief.md` with these sections: my intent (verbatim),
-   spec, acceptance criteria, constraints, kind (`ship` | `scout`), and the
-   rules from the worker skill.
+2. **Brief.** `conductor task new --title … --kind ship|scout [--intent …]`
+   creates each task in `intake` and scaffolds its `brief.md` with these
+   sections: my intent (verbatim), spec, acceptance criteria, constraints, kind
+   (`ship` | `scout`), and worker rules (the `worker` skill, plus the task id,
+   branch and session names). The conductor fills in the rest, then runs
+   `conductor task phase <task> briefed`.
 3. **Spawn.** Run `conductor spawn <task>`. It:
    1. runs `wt -C <repo> switch --create <branch> --no-cd --format=json` and
       records `path` and `branch`;

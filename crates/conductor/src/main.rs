@@ -6,6 +6,7 @@ mod report;
 mod start;
 mod status;
 mod table;
+mod task;
 
 use std::process::ExitCode;
 
@@ -14,6 +15,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::context::Ctx;
 use crate::decision::DecisionCommand;
 use crate::report::ReportArgs;
+use crate::task::TaskCommand;
 
 /// Multi-agent orchestrator for Claude Code and herdr.
 ///
@@ -63,8 +65,11 @@ enum Command {
         #[command(subcommand)]
         command: DecisionCommand,
     },
-    /// Create tasks and move them between phases. Not implemented yet.
-    Task(Stub),
+    /// Create tasks, move them between phases, and show them.
+    Task {
+        #[command(subcommand)]
+        command: TaskCommand,
+    },
     /// Create a task's worktree, herdr workspace and worker session. Not implemented yet.
     Spawn(Stub),
     /// Remove a finished task's worktree, session and workspace. Not implemented yet.
@@ -113,7 +118,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Hook(args) => hook::run(args.event.as_deref()),
         Command::Report(args) => report::run(args)?,
         Command::Decision { command } => decision::run(command)?,
-        Command::Task(_) => return Ok(not_implemented("task")),
+        Command::Task { command } => task::run(command)?,
         Command::Spawn(_) => return Ok(not_implemented("spawn")),
         Command::Teardown(_) => return Ok(not_implemented("teardown")),
         Command::Watch(_) => return Ok(not_implemented("watch")),

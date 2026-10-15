@@ -9,10 +9,6 @@ use conductor_state::{Config, Home, RepoIdent, Settings, resolve_repo};
 pub struct Ctx {
     pub home: Home,
     pub repo: RepoIdent,
-    #[expect(
-        dead_code,
-        reason = "read by `spawn` and `watch`, which later issues add"
-    )]
     pub settings: Settings,
 }
 
