@@ -6,10 +6,8 @@
 //! output), and logs errors to `logs/hook.log`.
 
 use std::any::Any;
-use std::fs::OpenOptions;
-use std::io::{Read as _, Write as _};
+use std::io::Read as _;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::Path;
 
 use anyhow::{Context as _, anyhow, bail};
 use conductor_state::{
@@ -20,9 +18,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::context::env_var;
+use crate::log::append_log;
 
-/// `hook.log` is moved to `hook.log.1` once it reaches this size.
-const LOG_LIMIT: u64 = 1 << 20;
 /// A `prompt` event keeps this many characters of the prompt's first line.
 const PROMPT_CHARS: usize = 120;
 /// A Bash tool summary keeps this many characters of the command.
@@ -56,7 +53,7 @@ pub fn run(event: Option<&str>) {
             format!("{err:#}").replace('\n', " "),
         );
         // Nowhere left to report a failure to log.
-        let _ = append_log(&home.logs_dir(), &line);
+        let _ = append_log(&home.logs_dir(), "hook.log", &line);
     }
 }
 
@@ -258,17 +255,6 @@ fn panic_message(panic: &(dyn Any + Send)) -> &str {
         .unwrap_or("unknown panic")
 }
 
-/// Appends `line` to `logs_dir/hook.log`, first moving a full log to `hook.log.1`.
-fn append_log(logs_dir: &Path, line: &str) -> std::io::Result<()> {
-    std::fs::create_dir_all(logs_dir)?;
-    let path = logs_dir.join("hook.log");
-    if std::fs::metadata(&path).is_ok_and(|meta| meta.len() >= LOG_LIMIT) {
-        std::fs::rename(&path, logs_dir.join("hook.log.1"))?;
-    }
-    let mut file = OpenOptions::new().append(true).create(true).open(&path)?;
-    file.write_all(format!("{line}\n").as_bytes())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,20 +284,5 @@ mod tests {
     fn missing_required_field_is_an_error() {
         let err = payload(HookEvent::SessionEnd, &HookInput::default(), |_| None).unwrap_err();
         assert_eq!(err.to_string(), "hook input has no `reason`");
-    }
-
-    #[test]
-    fn log_rotates_when_full() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = dir.path().join("hook.log");
-        let full = vec![b'x'; usize::try_from(LOG_LIMIT).unwrap()];
-        std::fs::write(&log, &full).unwrap();
-
-        append_log(dir.path(), "next").unwrap();
-        assert_eq!(std::fs::read(dir.path().join("hook.log.1")).unwrap(), full);
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), "next\n");
-
-        append_log(dir.path(), "again").unwrap();
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), "next\nagain\n");
     }
 }

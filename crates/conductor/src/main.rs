@@ -2,6 +2,7 @@ mod context;
 mod decision;
 mod hook;
 mod init;
+mod log;
 mod report;
 mod runner;
 mod shell;

@@ -346,6 +346,18 @@ forgets to report, so there is a backstop:
   every `pr_poll_interval` (default 2 minutes). It appends a `pr` event when
   anything changes. It wakes the conductor on: merged, closed, checks failed,
   or changes requested.
+  - The PR URL comes from `task.json`, else from the worker's latest `status`
+    event. Tasks without one are never polled, and a merged PR isn't polled
+    again.
+  - It wakes on transitions: into merged or closed, from not-failing to failing
+    checks, and into changes requested. The wake comes from reading back the
+    `pr` event it appended, so the cursor rules above apply: a restarted
+    watcher wakes on a `pr` event it appended but never reported, and never
+    wakes twice on one.
+  - A failing `gh` (network, rate limit, auth) is retried with exponential
+    backoff from the poll interval up to 15 minutes, logged to
+    `logs/watch.log`; it never makes the watcher exit non-zero. If `gh` can't
+    be run at all, it warns once and stops polling.
 - **Supplementary:** when the conductor messages a worker, it can pass
   `notify_when_idle: true` to get one notice when that worker's turn ends,
   including a short summary of the turn. Each subscription fires once, so the

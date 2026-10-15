@@ -1,6 +1,9 @@
 //! `conductor watch`: the conductor's backstop wake. Follows the `events.jsonl` of every live
 //! task in a repo and exits 2, which wakes the conductor through its `asyncRewake` Stop hook,
-//! when a worker needs it.
+//! when a worker needs it, or when a task's PR is merged, closed, starts failing checks or gets
+//! changes requested.
+
+mod pr;
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions, TryLockError};
@@ -12,12 +15,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use conductor_state::{Event, EventPayload, Phase, events_path, read_events, read_task, task_ids};
+use conductor_state::{
+    Config, Event, EventPayload, Phase, Settings, events_path, read_events, read_task, task_ids,
+};
 use jiff::SignedDuration;
 use notify::{RecursiveMode, Watcher as _};
 use serde::{Deserialize, Serialize};
 
+use self::pr::{PrPoller, PrSnapshot};
 use crate::context::{Target, TargetArgs};
+use crate::runner::{System, Tools};
 
 /// How often to rescan when no file notification arrives, in case one was missed.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -74,6 +81,15 @@ pub fn run(args: &WatchArgs) -> anyhow::Result<ExitCode> {
         Ok(watcher)
     });
 
+    let tools = Tools::resolve();
+    let mut poller = PrPoller::new(
+        &System,
+        &tools,
+        pr_poll_interval(&target),
+        target.home.logs_dir(),
+        target.repo_id.clone(),
+    );
+
     let mut state = WatchState::load(&repo_dir);
     loop {
         let wakes = state.scan();
@@ -83,6 +99,10 @@ pub fn run(args: &WatchArgs) -> anyhow::Result<ExitCode> {
                 eprintln!("{task}: {}", reasons.join("; "));
             }
             return Ok(ExitCode::from(WAKE));
+        }
+        if poller.poll(&state, Instant::now()) {
+            // Read the new `pr` events at once.
+            continue;
         }
 
         let Some(left) = args.max_wait.checked_sub(started.elapsed()) else {
@@ -98,6 +118,21 @@ pub fn run(args: &WatchArgs) -> anyhow::Result<ExitCode> {
             std::thread::sleep(wait);
         }
     }
+}
+
+/// The repo's `pr_poll_interval`. A config that can't be read or a negative interval gives the
+/// default, so the watcher still runs.
+fn pr_poll_interval(target: &Target) -> Duration {
+    let settings = Config::load(&target.home.config_path()).map_or_else(
+        |e| {
+            eprintln!("conductor: {e}");
+            Settings::default()
+        },
+        |config| config.resolve(&target.repo_id),
+    );
+    Duration::try_from(settings.pr_poll_interval).unwrap_or_else(|_| {
+        Duration::try_from(Settings::default().pr_poll_interval).unwrap_or_default()
+    })
 }
 
 /// The watcher's position in each live task's log, saved in `repos/<id>/watch.cursor`.
@@ -118,6 +153,12 @@ struct TaskCursor {
     /// The latest tool the worker started, for naming what a permission prompt is for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_tool: Option<LastTool>,
+    /// The latest `pr_url` the worker reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pr_url: Option<String>,
+    /// The PR as of the latest `pr` event, for that PR URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pr: Option<PrSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,8 +181,13 @@ impl TaskCursor {
                 });
                 None
             }
-            EventPayload::Status { .. } => {
+            EventPayload::Status { pr_url, .. } => {
                 self.reported = true;
+                if pr_url.is_some() && *pr_url != self.pr_url {
+                    // A new PR; what was seen of the old one says nothing about it.
+                    self.pr_url.clone_from(pr_url);
+                    self.pr = None;
+                }
                 None
             }
             EventPayload::TurnEnd { error } => {
@@ -174,6 +220,19 @@ impl TaskCursor {
             },
             EventPayload::DecisionOpen { key } => Some(format!("opened decision `{key}`")),
             EventPayload::SessionEnd { reason } => Some(format!("session ended ({reason})")),
+            EventPayload::Pr {
+                state,
+                checks,
+                review,
+            } => {
+                let new = PrSnapshot {
+                    state: *state,
+                    checks: *checks,
+                    review: *review,
+                };
+                let reasons = new.wake_reasons(self.pr.replace(new));
+                (!reasons.is_empty()).then(|| reasons.join("; "))
+            }
             _ => None,
         }
     }
@@ -310,6 +369,8 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
+    use conductor_state::{CheckState, PrState};
+
     use super::*;
 
     fn event(json: &str) -> Event {
@@ -421,6 +482,76 @@ mod tests {
     }
 
     #[test]
+    fn pr_events_wake_on_transitions() {
+        let mut cursor = TaskCursor::default();
+        let wakes = apply_all(
+            &mut cursor,
+            &[
+                r#"{"kind":"pr","state":"draft","checks":"pending"}"#,
+                r#"{"kind":"pr","state":"open","checks":"fail","review":"changes_requested"}"#,
+                r#"{"kind":"pr","state":"open","checks":"fail","review":"approved"}"#,
+                r#"{"kind":"pr","state":"open","checks":"pass","review":"approved"}"#,
+                r#"{"kind":"pr","state":"closed","checks":"pass"}"#,
+                r#"{"kind":"pr","state":"open","checks":"pass"}"#,
+                r#"{"kind":"pr","state":"merged","checks":"pass","review":"approved"}"#,
+            ],
+        );
+        assert_eq!(
+            wakes,
+            [
+                None,
+                Some("PR checks failing; PR changes requested".to_owned()),
+                None,
+                None,
+                Some("PR closed without merging".to_owned()),
+                None,
+                Some("PR merged".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn first_pr_event_wakes_on_a_failing_pr() {
+        let mut cursor = TaskCursor::default();
+        let wakes = apply_all(
+            &mut cursor,
+            &[r#"{"kind":"pr","state":"open","checks":"fail"}"#],
+        );
+        assert_eq!(wakes, [Some("PR checks failing".to_owned())]);
+    }
+
+    #[test]
+    fn a_new_pr_url_forgets_the_old_pr() {
+        let mut cursor = TaskCursor::default();
+        let wakes = apply_all(
+            &mut cursor,
+            &[
+                r#"{"kind":"status","verb":"done","pr_url":"https://github.com/erd/web/pull/42"}"#,
+                r#"{"kind":"pr","state":"open","checks":"fail"}"#,
+                r#"{"kind":"status","verb":"done","pr_url":"https://github.com/erd/web/pull/42"}"#,
+                r#"{"kind":"pr","state":"open","checks":"fail"}"#,
+                r#"{"kind":"status","verb":"done","pr_url":"https://github.com/erd/web/pull/43"}"#,
+                r#"{"kind":"pr","state":"open","checks":"fail"}"#,
+            ],
+        );
+        assert_eq!(
+            wakes,
+            [
+                None,
+                Some("PR checks failing".to_owned()),
+                None,
+                None,
+                None,
+                Some("PR checks failing".to_owned()),
+            ]
+        );
+        assert_eq!(
+            cursor.pr_url.as_deref(),
+            Some("https://github.com/erd/web/pull/43")
+        );
+    }
+
+    #[test]
     fn cursor_round_trips() {
         let cursors = Cursors {
             tasks: BTreeMap::from([(
@@ -431,6 +562,12 @@ mod tests {
                     last_tool: Some(LastTool {
                         name: "Bash".to_owned(),
                         summary: Some("rm -rf build".to_owned()),
+                    }),
+                    pr_url: Some("https://github.com/erd/web/pull/42".to_owned()),
+                    pr: Some(PrSnapshot {
+                        state: PrState::Open,
+                        checks: Some(CheckState::Fail),
+                        review: None,
                     }),
                 },
             )]),
