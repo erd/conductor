@@ -321,6 +321,46 @@ fn ignores_torn_down_and_abandoned_tasks() {
 }
 
 #[test]
+fn polls_the_pr_and_wakes_when_merged() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fx = Fixture::new();
+    let url = "https://github.com/erd/web/pull/42";
+    fx.set_phase(TASK_ID, "awaiting_merge");
+    let task_json = fx.task_dir(TASK_ID).join("task.json");
+    let mut task: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&task_json).unwrap()).unwrap();
+    task["pr_url"] = url.into();
+    std::fs::write(&task_json, task.to_string()).unwrap();
+
+    // A `gh` that reports the PR merged.
+    let bin = fx.tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let gh = bin.join("gh");
+    std::fs::write(
+        &gh,
+        "#!/bin/sh\n\
+         echo '{\"isDraft\":false,\"reviewDecision\":\"APPROVED\",\"state\":\"MERGED\",\
+         \"statusCheckRollup\":[]}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let output = finish(fx.command("1m").env("PATH", path).spawn().unwrap());
+    assert_wakes(&output, "fix-login-07: PR merged\n");
+
+    let events = std::fs::read_to_string(fx.task_dir(TASK_ID).join("events.jsonl")).unwrap();
+    let event: serde_json::Value = serde_json::from_str(events.trim()).unwrap();
+    assert_eq!(event["kind"], "pr");
+    assert_eq!(event["state"], "merged");
+    assert_eq!(event["review"], "approved");
+}
+
+#[test]
 fn unknown_repo_fails() {
     let fx = Fixture::new();
     let output = fx.command_for("nope-000000", "1s").output().unwrap();
