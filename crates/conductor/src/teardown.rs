@@ -66,9 +66,11 @@ struct PrView {
     state: String,
 }
 
-/// The field of `wt remove --format=json` that teardown uses.
+/// The fields teardown uses from an entry of `wt remove --format=json`, which prints an array
+/// with one entry per branch it removed.
 #[derive(Deserialize)]
-struct WtRemove {
+struct WtRemoved {
+    branch: String,
     branch_outcome: String,
 }
 
@@ -318,9 +320,13 @@ impl Steps<'_> {
             .args(["remove", branch, "--foreground", "--format=json"]);
         let cmd = if force { cmd.arg("-D") } else { cmd };
         let output = check_wt("wt remove", self.runner.run(&cmd)?, self.root)?;
-        let remove: WtRemove =
+        let removed: Vec<WtRemoved> =
             parse_json(&output.stdout).context("unexpected `wt remove` output")?;
-        Ok(remove.branch_outcome)
+        removed
+            .into_iter()
+            .find(|r| r.branch == branch)
+            .map(|r| r.branch_outcome)
+            .ok_or_else(|| anyhow!("`wt remove` printed no entry for branch {branch}"))
     }
 
     /// Closes the task's herdr workspace, which may already be gone.
@@ -549,9 +555,43 @@ mod tests {
         fake.ok(&["wt", "-C", ROOT, "remove", BRANCH], &wt_json(outcome))
     }
 
+    /// `wt remove` once the worktree is already gone, as on a rerun after it removed the
+    /// worktree but kept or failed to delete the branch.
+    fn remove_branch_only(fake: Fake, outcome: &str) -> Fake {
+        fake.ok(
+            &["wt", "-C", ROOT, "remove", BRANCH],
+            &wt_branch_only_json(outcome),
+        )
+    }
+
+    /// `wt remove --format=json` output (wt 0.80), pretty-printed as wt prints it.
     fn wt_json(outcome: &str) -> String {
         format!(
-            r#"{{"kind":"worktree","branch":"{BRANCH}","path":"{WORKTREE}","branch_outcome":"{outcome}","branch_checked_out_at":null}}"#
+            r#"[
+  {{
+    "branch": "{BRANCH}",
+    "branch_checked_out_at": null,
+    "branch_outcome": "{outcome}",
+    "kind": "worktree",
+    "path": "{WORKTREE}"
+  }}
+]
+"#
+        )
+    }
+
+    fn wt_branch_only_json(outcome: &str) -> String {
+        format!(
+            r#"[
+  {{
+    "branch": "{BRANCH}",
+    "branch_checked_out_at": null,
+    "branch_outcome": "{outcome}",
+    "kind": "branch_only",
+    "pruned": false
+  }}
+]
+"#
         )
     }
 
@@ -865,6 +905,14 @@ mod tests {
             fx.task().worktree_path.as_deref(),
             Some(Path::new(WORKTREE))
         );
+
+        let fx = Fixture::new(TaskKind::Scout, Phase::Review);
+        let fake = stop(pull(Fake::default())).ok(&["wt", "-C", ROOT, "remove", BRANCH], "[]\n");
+        let err = format!("{:#}", fx.teardown(&fake, &[]).result.unwrap_err());
+        assert!(
+            err.ends_with("`wt remove` printed no entry for branch conductor/fix-login-07"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -913,7 +961,12 @@ mod tests {
                         &["wt", "-C", ROOT, "remove"],
                     )
                 },
-                |f| close(remove(remove(pull(f), RETAINED_UNMERGED), "deleted")),
+                |f| {
+                    close(remove_branch_only(
+                        remove_branch_only(pull(f), RETAINED_UNMERGED),
+                        "deleted",
+                    ))
+                },
             ),
             (
                 "close",

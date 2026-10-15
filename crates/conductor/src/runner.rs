@@ -110,15 +110,14 @@ pub fn failure(what: &str, output: &RunOutput) -> anyhow::Error {
     }
 }
 
-/// Parses `stdout` as JSON, falling back to its last non-empty line in case something else was
-/// printed before it.
+/// Parses `stdout` as JSON, falling back to the shortest run of trailing lines that parses, in
+/// case something else was printed before it. That covers both one-line and pretty-printed JSON.
 pub fn parse_json<T: for<'de> Deserialize<'de>>(stdout: &str) -> anyhow::Result<T> {
     serde_json::from_str(stdout.trim()).or_else(|err| {
         stdout
-            .lines()
+            .match_indices('\n')
             .rev()
-            .find(|line| !line.trim().is_empty())
-            .and_then(|line| serde_json::from_str(line).ok())
+            .find_map(|(i, _)| serde_json::from_str(stdout[i + 1..].trim()).ok())
             .ok_or_else(|| anyhow!("{err}: {:?}", stdout.trim()))
     })
 }
@@ -280,6 +279,13 @@ mod fake {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_json_skips_noise_before_pretty_printed_json() {
+        let stdout = "hook output\n{ not json\n[\n  {\n    \"branch\": \"b\"\n  }\n]\n";
+        let parsed: serde_json::Value = parse_json(stdout).unwrap();
+        assert_eq!(parsed, serde_json::json!([{ "branch": "b" }]));
+    }
 
     #[test]
     fn display_quotes_env_program_and_args() {
