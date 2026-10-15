@@ -11,6 +11,7 @@ mod status;
 mod table;
 mod task;
 mod teardown;
+mod watch;
 
 use std::process::ExitCode;
 
@@ -22,6 +23,7 @@ use crate::report::ReportArgs;
 use crate::spawn::SpawnArgs;
 use crate::task::TaskCommand;
 use crate::teardown::TeardownArgs;
+use crate::watch::WatchArgs;
 
 /// Multi-agent orchestrator for Claude Code and herdr.
 ///
@@ -90,8 +92,15 @@ enum Command {
     /// workspace, and moves the task to `torn_down`, or `abandoned` with `--abandon`. If a step
     /// fails, rerunning continues from it. Run from the repo.
     Teardown(TeardownArgs),
-    /// Follow every task and wake the conductor when one needs it. Not implemented yet.
-    Watch(Stub),
+    /// Follow every live task's events and exit 2, waking the conductor, when one needs it.
+    ///
+    /// Run by the conductor's `asyncRewake` Stop hook. Wakes on a permission prompt or other
+    /// attention request, an opened decision, a session ending, or a turn ending without a
+    /// `conductor report` since the last one, printing one line per task to stderr. Remembers
+    /// what it has read in `watch.cursor`, so an event never wakes twice; a first run starts
+    /// at the end of each log. Exits 0 after `--max-wait`, or at once if another watcher holds
+    /// the repo's `watch.lock`.
+    Watch(WatchArgs),
     /// Reopen the workspaces and sessions of live tasks. Not implemented yet.
     Resume(Stub),
 }
@@ -137,7 +146,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Task { command } => task::run(command)?,
         Command::Spawn(args) => spawn::run(args)?,
         Command::Teardown(args) => teardown::run(args)?,
-        Command::Watch(_) => return Ok(not_implemented("watch")),
+        Command::Watch(args) => return watch::run(args),
         Command::Resume(_) => return Ok(not_implemented("resume")),
     }
     Ok(ExitCode::SUCCESS)

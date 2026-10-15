@@ -325,7 +325,22 @@ forgets to report, so there is a backstop:
   is the same technique firstmate uses. `conductor watch` follows every task's
   `events.jsonl` and exits 2, which wakes the conductor, on any of:
   `attention`, `turn_end` without a matching `status` report, `session_end`, or
-  `decision_open`. It writes a short wake summary to stderr.
+  `decision_open`. It writes a short wake summary to stderr, one line per
+  task, e.g. `fix-login-07: needs permission (Bash: rm -rf build)`. An
+  `idle_prompt` attention doesn't wake it: Claude sends one a minute after
+  every turn ends, and the `turn_end` rule already covers that. A turn that
+  ends on an API error always wakes it.
+  - It follows only live tasks (not `torn_down` or `abandoned`), and picks up
+    new task directories as they appear. It waits on file notifications, with
+    a once-a-second rescan as a fallback.
+  - Per-task byte offsets, and the little state the wake rules need from
+    earlier events, live in `repos/<id>/watch.cursor`, so a restarted watcher
+    never wakes twice on the same event. A first run (no cursor file) starts
+    at the end of each log.
+  - `flock` on `repos/<id>/watch.lock` keeps it to one watcher per repo; a
+    second one exits 0 at once.
+  - `--max-wait` (default 8 h, the hook's timeout) makes it exit 0 with
+    nothing to report.
 - **PR polling:** while a task has an open PR, `conductor watch` also runs
   `gh pr view <url> --json state,isDraft,reviewDecision,statusCheckRollup`
   every `pr_poll_interval` (default 2 minutes). It appends a `pr` event when
