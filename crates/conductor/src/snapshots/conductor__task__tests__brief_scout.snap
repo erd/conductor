@@ -1,0 +1,34 @@
+---
+source: crates/conductor/src/task.rs
+expression: "render_brief(&Brief\n{\n    title: \"Audit dependencies\", id: \"audit-deps-01\", kind: TaskKind::Scout,\n    intent: None, branch: \"conductor/audit-deps-01\", worker_session:\n    \"web-audit-deps-01\", conductor_session: \"conductor-web\",\n})"
+---
+# Audit dependencies
+
+## Intent (verbatim)
+
+<!-- The request, word for word. -->
+
+## Spec
+
+<!-- What to build or find out. -->
+
+## Acceptance criteria
+
+<!-- How the conductor will judge the result. -->
+
+## Constraints
+
+<!-- What not to touch, and anything else the worker must respect. -->
+
+## Kind
+
+`scout`: write `report.md` next to this brief. Change no code.
+
+## Worker rules
+
+Follow the `worker` skill.
+
+- Task id: `audit-deps-01`
+- Branch: `conductor/audit-deps-01`
+- Your session: `web-audit-deps-01`
+- Conductor session: `conductor-web`

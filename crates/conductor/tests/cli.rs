@@ -316,7 +316,7 @@ fn bad_config_fails_and_names_the_file() {
 #[test]
 fn stubs_are_not_implemented_yet() {
     let fx = Fixture::new();
-    for name in ["task", "spawn", "teardown", "watch", "resume"] {
+    for name in ["spawn", "teardown", "watch", "resume"] {
         let output = fx.run(&fx.repo(), &[name, "some", "--args"]);
         assert_eq!(output.status.code(), Some(1), "{name}");
         assert_eq!(
@@ -408,4 +408,205 @@ fn every_command_has_help() {
         assert!(stdout(&output).starts_with(char::is_uppercase), "{name}");
         assert!(stdout(&output).contains("Usage: conductor"), "{name}");
     }
+}
+
+impl Fixture {
+    /// `conductor task new` from the main checkout; returns the new task's id.
+    fn new_task(&self, title: &str, kind: &str) -> String {
+        let output = self.run(
+            &self.repo(),
+            &["task", "new", "--title", title, "--kind", kind],
+        );
+        assert_success(&output);
+        let out = stdout(&output);
+        let mut lines = out.lines();
+        let id = lines.next().unwrap().to_owned();
+        let brief = lines.next().unwrap();
+        assert_eq!(lines.next(), None);
+        let task_dir = self.repo_dir().join("tasks").join(&id);
+        assert_eq!(Path::new(brief), task_dir.join("brief.md"));
+        id
+    }
+
+    fn task(&self, id: &str) -> Task {
+        conductor_state::read_task(&self.repo_dir().join("tasks").join(id)).unwrap()
+    }
+
+    fn phase_events(&self, id: &str) -> Vec<(Phase, Phase)> {
+        let events = self.repo_dir().join("tasks").join(id).join("events.jsonl");
+        conductor_state::read_events(&events, 0)
+            .unwrap()
+            .events
+            .into_iter()
+            .filter_map(|event| match event.payload {
+                conductor_state::EventPayload::Phase { from, to } => Some((from, to)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn task_new_ids_are_unique_and_count_per_repo() {
+    let fx = Fixture::new();
+    assert_eq!(fx.new_task("Fix login", "ship"), "fix-login-01");
+    assert_eq!(fx.new_task("Add docs!", "scout"), "add-docs-02");
+    // The same title still gets a fresh id.
+    assert_eq!(fx.new_task("Fix login", "ship"), "fix-login-03");
+    // The counter continues past the largest existing one, whatever its slug.
+    std::fs::create_dir_all(fx.repo_dir().join("tasks/old-task-07")).unwrap();
+    assert_eq!(fx.new_task("Rate limit", "ship"), "rate-limit-08");
+
+    let task = fx.task("add-docs-02");
+    assert_eq!(task.phase, Phase::Intake);
+    assert_eq!(task.kind, TaskKind::Scout);
+    assert_eq!(task.title, "Add docs!");
+    assert_eq!(task.branch, None);
+    assert_eq!(task.created_at, task.updated_at);
+    let brief = std::fs::read_to_string(fx.repo_dir().join("tasks/add-docs-02/brief.md")).unwrap();
+    assert!(
+        brief.contains("- Branch: `conductor/add-docs-02`"),
+        "{brief}"
+    );
+    assert!(
+        brief.contains("- Conductor session: `conductor-my-repo`"),
+        "{brief}"
+    );
+    assert!(
+        brief.contains("- Your session: `my-repo-add-docs-02`"),
+        "{brief}"
+    );
+}
+
+#[test]
+fn task_new_copies_intent_and_rejects_bad_input() {
+    let fx = Fixture::new();
+    let intent = "Make login work with `+` in emails.\nThanks!";
+    let output = fx.run(
+        &fx.worktree(),
+        &[
+            "task",
+            "new",
+            "--title",
+            "Fix login",
+            "--kind",
+            "ship",
+            "--intent",
+            intent,
+        ],
+    );
+    assert_success(&output);
+    let brief = std::fs::read_to_string(fx.repo_dir().join("tasks/fix-login-01/brief.md")).unwrap();
+    assert!(
+        brief.contains(&format!("## Intent (verbatim)\n\n{intent}\n")),
+        "{brief}"
+    );
+
+    let output = fx.run(
+        &fx.repo(),
+        &["task", "new", "--title", " ", "--kind", "ship"],
+    );
+    assert_eq!(stderr(&output), "conductor: the title is empty\n");
+    let output = fx.run(
+        &fx.repo(),
+        &["task", "new", "--title", "x", "--kind", "build"],
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn task_phase_follows_the_lifecycle() {
+    let fx = Fixture::new();
+    let id = fx.new_task("Fix login", "ship");
+
+    assert_success(&fx.run(&fx.repo(), &["task", "phase", &id, "briefed"]));
+    assert_eq!(fx.task(&id).phase, Phase::Briefed);
+    assert_eq!(fx.phase_events(&id), [(Phase::Intake, Phase::Briefed)]);
+
+    // An illegal move fails, names the allowed ones, and changes nothing.
+    let output = fx.run(&fx.repo(), &["task", "phase", &id, "working"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "conductor: cannot move {id} from briefed to working; allowed next phases: \
+             spawning, failed, abandoned\n"
+        )
+    );
+    assert_eq!(fx.task(&id).phase, Phase::Briefed);
+    assert_eq!(fx.phase_events(&id).len(), 1);
+
+    // --force makes it anyway, with a warning.
+    let output = fx.run(&fx.repo(), &["task", "phase", &id, "working", "--force"]);
+    assert_success(&output);
+    assert_eq!(
+        stderr(&output),
+        format!("conductor: warning: forcing {id} from briefed to working\n")
+    );
+    assert_eq!(fx.task(&id).phase, Phase::Working);
+    assert_eq!(fx.phase_events(&id)[1], (Phase::Briefed, Phase::Working));
+
+    let output = fx.run(&fx.repo(), &["task", "phase", &id, "done"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("expected one of: intake, briefed,"));
+}
+
+#[test]
+fn task_abandon() {
+    let fx = Fixture::new();
+    let id = fx.new_task("Fix login", "ship");
+    // From outside the repo, naming it by id.
+    let repo_id = resolve_repo(&fx.repo()).unwrap().id;
+    let output = fx.run(fx.tmp.path(), &["task", "abandon", &id, "--repo", &repo_id]);
+    assert_success(&output);
+    assert_eq!(fx.task(&id).phase, Phase::Abandoned);
+    assert_eq!(fx.phase_events(&id), [(Phase::Intake, Phase::Abandoned)]);
+
+    let output = fx.run(&fx.repo(), &["task", "abandon", &id]);
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "conductor: cannot move {id} from abandoned to abandoned; allowed next phases: \
+             torn_down\n"
+        )
+    );
+
+    assert_success(&fx.run(&fx.repo(), &["task", "phase", &id, "torn_down"]));
+    let output = fx.run(&fx.repo(), &["task", "phase", &id, "intake"]);
+    assert_eq!(
+        stderr(&output),
+        format!("conductor: cannot move {id} from torn_down to intake: nothing leaves torn_down\n")
+    );
+}
+
+#[test]
+fn task_show_and_list() {
+    let fx = Fixture::new();
+    let id = fx.new_task("Fix login", "ship");
+
+    let output = fx.run(&fx.repo(), &["task", "show", &id, "--json"]);
+    assert_success(&output);
+    let shown: Task = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(shown, fx.task(&id));
+
+    let output = fx.run(&fx.repo(), &["task", "show", &id]);
+    assert_success(&output);
+    let text = stdout(&output);
+    assert!(text.starts_with(&format!("id       {id}\n")), "{text}");
+    assert!(text.contains("phase    intake\n"), "{text}");
+    assert!(!text.contains("branch"), "{text}");
+
+    let list = fx.run(&fx.repo(), &["task", "list", "--json"]);
+    assert_success(&list);
+    let status = fx.run(&fx.repo(), &["status", "--json"]);
+    assert_eq!(stdout(&list), stdout(&status));
+
+    let output = fx.run(&fx.repo(), &["task", "show", "nope-01"]);
+    let repo_id = resolve_repo(&fx.repo()).unwrap().id;
+    assert_eq!(
+        stderr(&output),
+        format!("conductor: no task `nope-01` in repo `{repo_id}`\n")
+    );
+    let output = fx.run(&fx.repo(), &["task", "show", "../x"]);
+    assert_eq!(stderr(&output), "conductor: invalid task id \"../x\"\n");
 }

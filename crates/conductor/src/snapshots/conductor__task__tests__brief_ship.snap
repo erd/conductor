@@ -1,0 +1,34 @@
+---
+source: crates/conductor/src/task.rs
+expression: "render_brief(&Brief\n{\n    title: \"Fix login\", id: \"fix-login-07\", kind: TaskKind::Ship, intent:\n    Some(\"The login page 500s when the email has a `+` in it. Fix it.\"),\n    branch: \"conductor/fix-login-07\", worker_session: \"web-fix-login-07\",\n    conductor_session: \"conductor-web\",\n})"
+---
+# Fix login
+
+## Intent (verbatim)
+
+The login page 500s when the email has a `+` in it. Fix it.
+
+## Spec
+
+<!-- What to build or find out. -->
+
+## Acceptance criteria
+
+<!-- How the conductor will judge the result. -->
+
+## Constraints
+
+<!-- What not to touch, and anything else the worker must respect. -->
+
+## Kind
+
+`ship`: produce a change, pushed to the branch below and delivered as a draft PR.
+
+## Worker rules
+
+Follow the `worker` skill.
+
+- Task id: `fix-login-07`
+- Branch: `conductor/fix-login-07`
+- Your session: `web-fix-login-07`
+- Conductor session: `conductor-web`
