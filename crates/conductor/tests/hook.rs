@@ -72,7 +72,7 @@ fn bare_hook(event: &str) -> Command {
     command
 }
 
-/// Runs `command` with `stdin` piped in.
+/// Runs `command` with `stdin` piped in, tolerating a child that doesn't read it.
 fn run_with_stdin(command: &mut Command, stdin: &str) -> Output {
     let mut child = command
         .stdin(Stdio::piped())
@@ -80,12 +80,12 @@ fn run_with_stdin(command: &mut Command, stdin: &str) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    // The child may exit without reading stdin (the shim when the binary is missing, the hook's
+    // fast path), closing the pipe before or during the write.
+    match child.stdin.take().unwrap().write_all(stdin.as_bytes()) {
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
+        result => result.unwrap(),
+    }
     child.wait_with_output().unwrap()
 }
 
