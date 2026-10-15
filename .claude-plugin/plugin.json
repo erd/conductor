@@ -1,0 +1,9 @@
+{
+  "name": "conductor",
+  "description": "Multi-agent orchestrator for Claude Code and herdr: hooks that record worker activity and wake the conductor",
+  "author": {
+    "name": "Erich Douglass"
+  },
+  "homepage": "https://github.com/erd/conductor",
+  "repository": "https://github.com/erd/conductor"
+}

@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -35,6 +36,14 @@ struct Fixture {
     tmp: TempDir,
 }
 
+const HERDR_STUB: &str = r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/herdr.log"
+case "$1 $2" in
+"plugin list") echo '{"result":{"plugins":[{"plugin_id":"conductor-deck","enabled":true,"panes":[{"id":"deck","title":"conductor"}]}]}}' ;;
+"pane list") echo '{"result":{"panes":[{"pane_id":"p1"}]}}' ;;
+esac
+"#;
+
 impl Fixture {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
@@ -48,7 +57,25 @@ impl Fixture {
             &["worktree", "add", "-q", ".worktrees/task", "-b", "task"],
         );
         std::fs::create_dir_all(fixture.home()).unwrap();
+        let herdr = fixture.herdr();
+        std::fs::write(&herdr, HERDR_STUB).unwrap();
+        std::fs::set_permissions(&herdr, std::fs::Permissions::from_mode(0o755)).unwrap();
         fixture
+    }
+
+    /// A stub `herdr` that logs its arguments to `herdr.log` and reports the deck plugin as
+    /// installed with no pane open.
+    fn herdr(&self) -> PathBuf {
+        self.tmp.path().join("herdr")
+    }
+
+    /// The `herdr` stub's calls, one line of arguments each.
+    fn herdr_calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.tmp.path().join("herdr.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
     }
 
     fn repo(&self) -> PathBuf {
@@ -68,14 +95,16 @@ impl Fixture {
         self.home().join("repos").join(id)
     }
 
-    /// `conductor <args>` run in `dir` with this fixture's home and no herdr or conductor
-    /// session variables, which are set when the tests run inside a conductor worker.
+    /// `conductor <args>` run in `dir` with this fixture's home, the `herdr` stub, and no herdr
+    /// or conductor session variables, which are set when the tests run inside a conductor
+    /// worker.
     fn command(&self, dir: &Path, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_conductor"));
         command
             .args(args)
             .current_dir(dir)
             .env("CONDUCTOR_HOME", self.home())
+            .env("HERDR_BIN_PATH", self.herdr())
             .env_remove("CONDUCTOR_TASK_ID")
             .env_remove("CONDUCTOR_ROLE")
             .env_remove("CONDUCTOR_REPO_ID")
@@ -344,7 +373,7 @@ fn hook_never_fails() {
 }
 
 #[test]
-fn conductor_session_start_records_pane_and_workspace() {
+fn conductor_session_start_records_pane_and_opens_the_deck() {
     let fx = Fixture::new();
     assert_success(&fx.run(&fx.repo(), &["init"]));
     let repo_id = resolve_repo(&fx.repo()).unwrap().id;
@@ -362,14 +391,24 @@ fn conductor_session_start_records_pane_and_workspace() {
     };
     let record = || read_repo_record(&fx.repo_dir()).unwrap().unwrap();
 
-    // Only SessionStart touches repo.json in the conductor session.
+    // Only SessionStart touches repo.json or herdr in the conductor session.
     hook("pre-tool-use");
     assert_eq!(record().herdr_pane_id, None);
+    assert_eq!(fx.herdr_calls(), Vec::<String>::new());
 
     hook("session-start");
     assert_eq!(record().herdr_pane_id.as_deref(), Some("p1"));
     assert_eq!(record().herdr_workspace_id.as_deref(), Some("w1"));
     assert!(!fx.home().join("logs").exists());
+    assert_eq!(
+        fx.herdr_calls(),
+        [
+            "plugin list --plugin conductor-deck --json",
+            "pane list --workspace w1",
+            "plugin pane open --plugin conductor-deck --entrypoint deck --placement split \
+             --direction right --target-pane p1",
+        ]
+    );
 
     // `init` from a plain terminal keeps both.
     assert_success(&fx.run(&fx.repo(), &["init"]));
