@@ -167,6 +167,49 @@ fn marketplace_lists_the_plugin_from_the_repo_root() {
     assert_eq!(entries[0]["source"], "./");
 }
 
+/// The `key: value` lines between a skill's opening and closing `---`.
+fn frontmatter(path: &str) -> Vec<(String, String)> {
+    let text = std::fs::read_to_string(repo_root().join(path)).unwrap();
+    let rest = text
+        .strip_prefix("---\n")
+        .unwrap_or_else(|| panic!("{path}: no frontmatter"));
+    let (block, _) = rest
+        .split_once("\n---\n")
+        .unwrap_or_else(|| panic!("{path}: unterminated frontmatter"));
+    block
+        .lines()
+        .map(|line| {
+            let (key, value) = line
+                .split_once(':')
+                .unwrap_or_else(|| panic!("{path}: not `key: value`: {line}"));
+            (key.to_owned(), value.trim().to_owned())
+        })
+        .collect()
+}
+
+/// Every skill is named after its directory, so it loads as `/conductor:<dir>`. Only the
+/// conductor skill, which `conductor start` invokes, is hidden from the model.
+#[test]
+fn skills_have_frontmatter() {
+    for (skill, manual_only) in [("conductor", true), ("worker", false), ("status", false)] {
+        let path = format!("skills/{skill}/SKILL.md");
+        let fields = frontmatter(&path);
+        let get = |key: &str| {
+            fields
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(get("name"), Some(skill), "{path}");
+        assert!(!get("description").unwrap_or_default().is_empty(), "{path}");
+        assert_eq!(
+            get("disable-model-invocation"),
+            manual_only.then_some("true"),
+            "{path}"
+        );
+    }
+}
+
 #[test]
 fn shim_records_a_worker_event() {
     let fx = Fixture::new();

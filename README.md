@@ -35,8 +35,15 @@ when one needs it. See [docs/design.md](docs/design.md).
 
 The plugin is installed at user scope, so its hooks run in every Claude session. They do
 nothing outside conductor sessions. If the CLI isn't in `~/.cargo/bin`, set `CONDUCTOR_BIN` to
-its path. The plugin also provides the `worker` skill, which every worker session follows: how
-to report progress, raise decisions, and deliver a draft PR or a report.
+its path. The plugin also provides three skills:
+
+- `conductor`, which `conductor start` loads: the conductor's role, from splitting a goal into
+  tasks through briefing, spawning, supervising and reviewing workers to tearing each task down
+  once its PR is merged.
+- `worker`, which every worker session follows: how to report progress, raise decisions, and
+  deliver a draft PR or a report.
+- `status`, which summarizes the repo's tasks: what needs attention, what's in progress, what's
+  awaiting merge, and what's done.
 
 ## Usage
 
