@@ -1,6 +1,6 @@
 {
   "name": "conductor",
-  "description": "Multi-agent orchestrator for Claude Code and herdr: hooks that record worker activity and wake the conductor, and the worker skill",
+  "description": "Multi-agent orchestrator for Claude Code and herdr: hooks that record worker activity and wake the conductor, and the conductor, worker and status skills",
   "author": {
     "name": "Erich Douglass"
   },
