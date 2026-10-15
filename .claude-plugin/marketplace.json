@@ -1,0 +1,14 @@
+{
+  "name": "conductor",
+  "description": "The conductor plugin, served from its own repo",
+  "owner": {
+    "name": "Erich Douglass"
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "source": "./",
+      "description": "Multi-agent orchestrator for Claude Code and herdr"
+    }
+  ]
+}

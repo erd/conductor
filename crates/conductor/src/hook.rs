@@ -18,7 +18,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::context::env_var;
+use crate::deck;
 use crate::log::append_log;
+use crate::runner::{System, Tools};
 
 /// A `prompt` event keeps this many characters of the prompt's first line.
 const PROMPT_CHARS: usize = 120;
@@ -76,8 +78,14 @@ fn record(event: &str, task: Option<&str>, role: Option<&str>) -> anyhow::Result
         };
         append_event(&task_dir, &event)?;
     } else if role == Some("conductor") && event == HookEvent::SessionStart {
-        record_conductor_pane()?;
-        // #12 opens the deck here.
+        let recorded = record_conductor_pane();
+        // The deck doesn't need repo.json, so open it even if recording failed.
+        if let Some(pane) = env_var("HERDR_PANE_ID") {
+            let workspace = env_var("HERDR_WORKSPACE_ID");
+            deck::open(&System, &Tools::resolve(), &pane, workspace.as_deref())
+                .context("cannot open the deck")?;
+        }
+        recorded?;
     }
     Ok(())
 }

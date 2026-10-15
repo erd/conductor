@@ -88,7 +88,9 @@ skills/
   conductor/SKILL.md      the executive-assistant role and lifecycle
   worker/SKILL.md         brief protocol, status reporting, decisions
   status/SKILL.md         summarize all tasks for this repo
-hooks/hooks.json          every hook calls `conductor hook <event>` through a shim
+hooks/
+  hooks.json              every hook calls `conductor hook <event>` through the shim
+  conductor-hook.sh       the shim
 crates/
   conductor/              the CLI binary
   conductor-state/        serde types for task.json, events, decisions, plus the JSON schema
@@ -321,7 +323,9 @@ forgets to report, so there is a backstop:
 - **Primary:** workers `SendMessage` the conductor on done, blocked, or
   needs-decision.
 - **Backstop:** a Stop hook on the conductor session (`CONDUCTOR_ROLE=conductor`)
-  starts `conductor watch` as an `asyncRewake` hook with a long timeout. This
+  starts `conductor watch` as an `asyncRewake` hook with an 8 h timeout. The
+  plugin registers it for every session, and the shim (`conductor-hook.sh
+  watch`) exits 0 at once unless `CONDUCTOR_ROLE=conductor`. This
   is the same technique firstmate uses. `conductor watch` follows every task's
   `events.jsonl` and exits 2, which wakes the conductor, on any of:
   `attention`, `turn_end` without a matching `status` report, `session_end`, or
@@ -369,8 +373,10 @@ forgets to report, so there is a backstop:
 
 The plugin is installed at user scope, so its hooks fire in every Claude
 session on the machine. The hook command is a small shim that execs
-`~/.cargo/bin/conductor hook <event>` if the binary exists and exits 0
-otherwise. The binary returns immediately unless `CONDUCTOR_TASK_ID` or
+`~/.cargo/bin/conductor hook <event>` (or `$CONDUCTOR_BIN`) if the binary
+exists and exits 0 otherwise. It is registered for SessionStart,
+UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification,
+Stop, StopFailure and SessionEnd. The binary returns immediately unless `CONDUCTOR_TASK_ID` or
 `CONDUCTOR_ROLE` is set. Measured cost: about 8.5 ms per hook versus 4.6 ms
 for `sh -c true`, the same as a `jq` call. That is negligible.
 
@@ -411,8 +417,11 @@ which is moved to `hook.log.1` once it reaches 1 MiB.
   `layout.updated` to stay close to the configured `deck_width` in columns.
 - **Opening:** the conductor's SessionStart hook runs `herdr plugin pane open
   --plugin conductor-deck --entrypoint deck --placement split --direction right
-  --target-pane $HERDR_PANE_ID`, unless the deck is already open. There is
-  also a herdr keybinding action to toggle it.
+  --target-pane $HERDR_PANE_ID`, unless the deck plugin isn't installed and
+  enabled or the deck is already open. herdr doesn't report which plugin owns a
+  pane, but it labels a plugin pane with its manifest title, so "already open"
+  means a pane in the conductor's workspace labelled with the deck pane's
+  title. There is also a herdr keybinding action to toggle it.
 - **Data:**
   - a file watch on `repos/<repo-id>/tasks/*/`;
   - herdr `events.subscribe` (NDJSON over `HERDR_SOCKET_PATH`) for
