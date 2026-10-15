@@ -314,16 +314,14 @@ fn bad_config_fails_and_names_the_file() {
 }
 
 #[test]
-fn stubs_are_not_implemented_yet() {
+fn resume_is_not_implemented_yet() {
     let fx = Fixture::new();
-    for name in ["watch", "resume"] {
-        let output = fx.run(&fx.repo(), &[name, "some", "--args"]);
-        assert_eq!(output.status.code(), Some(1), "{name}");
-        assert_eq!(
-            stderr(&output),
-            format!("conductor: `conductor {name}` is not implemented yet\n")
-        );
-    }
+    let output = fx.run(&fx.repo(), &["resume", "some", "--args"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        "conductor: `conductor resume` is not implemented yet\n"
+    );
 }
 
 #[test]
