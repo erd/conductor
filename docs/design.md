@@ -171,7 +171,7 @@ Every event carries `ts`, `task`, `kind`, and `session_id` (when known).
 | `status` | `conductor report <verb> ["<text>"] [--pr <url>]` (worker) | verb: `working`, `blocked`, `done`, `failed`, plus text, `pr_url?` |
 | `decision_open` / `decision_answered` | `conductor decision open` (worker) / `conductor decision answer` (the deck or the conductor) | `key` |
 | `phase` | `conductor task phase …` (conductor) | `from`, `to` |
-| `pr` | `conductor watch` polling `gh pr view` | `state` (draft, open, merged, closed), `checks` (pass, fail, pending), `review` (`reviewDecision`) |
+| `pr` | `conductor watch` polling `gh pr view`; `conductor pr ready`; `conductor teardown` | `state` (draft, open, merged, closed), `checks` (pass, fail, pending), `review` (`reviewDecision`) |
 
 Live activity on a card comes from the most recent hook events: working on
 `Edit src/x.rs`, waiting on a permission prompt, idle, or exited. The task's
@@ -257,8 +257,11 @@ stateDiagram-v2
    using a review subagent where useful.
    - If changes are needed, it sends fix-ups back over `SendMessage`; the
      worker pushes to the same branch.
-   - If the PR is good, it runs `gh pr ready` and tells me the URL. A non-draft
-     PR always means the conductor has signed off.
+   - If the PR is good, it runs `conductor pr ready <id>` and tells me the
+     URL. That runs `gh pr ready` unless the PR is already ready, records the
+     PR's state as a `pr` event so `conductor status` shows it at once, and
+     moves the task to `awaiting_merge`. A non-draft PR always means the
+     conductor has signed off.
    - For a scout, the conductor reads `report.md`, summarizes it for me, and
      goes straight to teardown.
 6. **Awaiting merge.** I review and merge on GitHub. `conductor watch` polls
@@ -382,6 +385,11 @@ forgets to report, so there is a backstop:
     `pr` event it appended, so the cursor rules above apply: a restarted
     watcher wakes on a `pr` event it appended but never reported, and never
     wakes twice on one.
+  - Watch polls only live tasks, so `conductor pr ready` and `conductor
+    teardown` record the state they read too: `open` once the PR is marked
+    ready, and the final state when a task is torn down or abandoned (a
+    failing `gh` only warns on abandon). `conductor status` never shows a
+    stale `draft` or open state for a finished task.
   - A failing `gh` (network, rate limit, auth) is retried with exponential
     backoff from the poll interval up to 15 minutes, logged to
     `logs/watch.log`; it never makes the watcher exit non-zero. If `gh` can't
@@ -532,5 +540,5 @@ Kept from firstmate:
 3. **`conductor watch`** and the conductor's `asyncRewake` Stop hook.
 4. **`conductor-deck`:** read-only cards, then focus and message, then
    decision answers.
-5. **PR lifecycle:** draft PR → `gh pr ready`, PR polling in `conductor
+5. **PR lifecycle:** draft PR → `conductor pr ready`, PR polling in `conductor
    watch`, pull + `wt remove` teardown, `conductor resume`.

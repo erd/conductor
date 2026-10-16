@@ -22,8 +22,9 @@ use jiff::SignedDuration;
 use notify::{RecursiveMode, Watcher as _};
 use serde::{Deserialize, Serialize};
 
-use self::pr::{PrPoller, PrSnapshot};
+use self::pr::PrPoller;
 use crate::context::{Target, TargetArgs};
+use crate::pr::PrSnapshot;
 use crate::runner::{System, Tools};
 
 /// How often to rescan when no file notification arrives, in case one was missed.

@@ -3,6 +3,8 @@
 //! `torn_down` (or `abandoned` with `--abandon`).
 //!
 //! A ship task is torn down only after GitHub reports its PR merged; nothing is merged locally.
+//! The PR's final state is recorded as a `pr` event, since `conductor watch` stops polling the
+//! task once it's torn down.
 //! Each step clears the `task.json` field naming what it removed as soon as it's gone, so after
 //! a failure a rerun picks up where the last one stopped.
 
@@ -14,14 +16,15 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, anyhow, bail};
 use clap::Args;
 use conductor_state::{
-    Activity, EventPayload, Phase, Task, TaskKind, events_path, fold, read_events, read_task,
-    write_task_atomic,
+    Activity, EventPayload, Phase, PrState, Task, TaskKind, events_path, fold, read_events,
+    read_task, write_task_atomic,
 };
 use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::context::{Ctx, Target};
+use crate::pr;
 use crate::runner::{Cmd, RunOutput, Runner, System, Tools, check, check_wt, failure, parse_json};
 use crate::status::snake_case;
 use crate::task::move_phase;
@@ -58,12 +61,6 @@ pub fn run(args: &TeardownArgs) -> anyhow::Result<()> {
         &mut std::io::stdout().lock(),
         &mut std::io::stderr().lock(),
     )
-}
-
-/// The fields of `gh pr view --json state,mergedAt` that teardown uses.
-#[derive(Deserialize)]
-struct PrView {
-    state: String,
 }
 
 /// The fields teardown uses from an entry of `wt remove --format=json`, which prints an array
@@ -108,10 +105,24 @@ fn teardown(
     }
     let events = read_events(&events_path(&task_dir), 0)?;
     let live = fold(&events.events);
+    let pr_url = task.pr_url.clone().or_else(|| live.pr_url.clone());
 
     // A merged PR's branch may be force-deleted: GitHub already has its changes.
     let mut force_delete = args.force_delete_branch;
-    if !args.abandon {
+    if args.abandon {
+        // Abandoning doesn't depend on GitHub, so a PR that can't be read is only a warning.
+        if let Some(url) = &pr_url {
+            let recorded = pr::fetch(runner, tools, url)
+                .and_then(|snapshot| pr::record(&task_dir, id, snapshot, live.pr.as_ref()));
+            if let Err(e) = recorded {
+                writeln!(
+                    err,
+                    "conductor: warning: cannot refresh {id}'s PR state: {e:#}; status shows \
+                     the last-known state"
+                )?;
+            }
+        }
+    } else {
         let phase = task.phase;
         let ship = task.kind == TaskKind::Ship;
         // A ship task still awaiting merge first moves to `merged` once GitHub confirms it.
@@ -124,13 +135,17 @@ fn teardown(
             );
         }
         if ship {
-            let url = task.pr_url.clone().or(live.pr_url).ok_or_else(|| {
+            let url = pr_url.ok_or_else(|| {
                 anyhow!("{id} has no PR; teardown needs it merged (or pass --abandon)")
             })?;
-            let state = pr_state(runner, tools, &url)?;
-            if state != "MERGED" {
-                bail!("{id}'s PR is {state}; teardown needs it merged (or pass --abandon)");
+            let snapshot = pr::fetch(runner, tools, &url)?;
+            if snapshot.state != PrState::Merged {
+                bail!(
+                    "{id}'s PR is {}; teardown needs it merged (or pass --abandon)",
+                    snake_case(&snapshot.state)
+                );
             }
+            pr::record(&task_dir, id, snapshot, live.pr.as_ref())?;
             force_delete = true;
             if phase != Phase::Merged && Phase::can_transition(phase, Phase::Merged) {
                 move_phase(&task_dir, &mut task, Phase::Merged)?;
@@ -168,14 +183,6 @@ fn teardown(
     }
     writeln!(steps.out, "{id} {}", snake_case(&to))?;
     Ok(())
-}
-
-/// The PR's state as `gh` prints it: `OPEN`, `CLOSED` or `MERGED`.
-fn pr_state(runner: &dyn Runner, tools: &Tools, url: &str) -> anyhow::Result<String> {
-    let cmd = Cmd::new(&tools.gh).args(["pr", "view", url, "--json", "state,mergedAt"]);
-    let output = check("gh pr view", runner.run(&cmd)?)?;
-    let view: PrView = parse_json(&output.stdout).context("unexpected `gh pr view` output")?;
-    Ok(view.state)
 }
 
 impl Steps<'_> {
@@ -470,6 +477,31 @@ mod tests {
             append_event(&self.task_dir(), &event(payload)).unwrap();
         }
 
+        /// The state of each `pr` event, and where it falls among the `phase` events: the
+        /// number of phase events before it.
+        fn prs(&self) -> Vec<(PrState, usize)> {
+            let mut phases = 0;
+            let mut prs = Vec::new();
+            for e in read_events(&events_path(&self.task_dir()), 0)
+                .unwrap()
+                .events
+            {
+                match e.payload {
+                    EventPayload::Phase { .. } => phases += 1,
+                    EventPayload::Pr { state, .. } => prs.push((state, phases)),
+                    _ => {}
+                }
+            }
+            prs
+        }
+
+        /// The PR state `conductor status --all` shows.
+        fn status_pr(&self) -> Option<PrState> {
+            let repo_dir = self.ctx.home.repo_dir(&self.ctx.repo.id);
+            let rows = crate::status::collect(&repo_dir, true).unwrap();
+            rows[0].pr.as_ref().map(|pr| pr.state)
+        }
+
         fn phases(&self) -> Vec<(Phase, Phase)> {
             read_events(&events_path(&self.task_dir()), 0)
                 .unwrap()
@@ -522,11 +554,17 @@ mod tests {
         }
     }
 
-    fn merged(fake: Fake) -> Fake {
+    fn pr_view(fake: Fake, state: &str) -> Fake {
         fake.ok(
             &["gh", "pr", "view", PR],
-            r#"{"mergedAt":"2026-10-14T12:00:00Z","state":"MERGED"}"#,
+            &format!(
+                r#"{{"isDraft":false,"reviewDecision":"APPROVED","state":"{state}","statusCheckRollup":[]}}"#
+            ),
         )
+    }
+
+    fn merged(fake: Fake) -> Fake {
+        pr_view(fake, "MERGED")
     }
 
     /// The main checkout's default branch and current branch.
@@ -627,10 +665,19 @@ mod tests {
                 (Phase::Merged, Phase::TornDown)
             ]
         );
+        assert_eq!(fx.prs(), [(PrState::Merged, 0)], "recorded before the move");
+        assert_eq!(fx.status_pr(), Some(PrState::Merged));
         let argvs = fake.argvs();
         assert_eq!(
             argvs[0],
-            ["gh", "pr", "view", PR, "--json", "state,mergedAt"]
+            [
+                "gh",
+                "pr",
+                "view",
+                PR,
+                "--json",
+                "state,isDraft,reviewDecision,statusCheckRollup"
+            ]
         );
         assert_eq!(
             argvs[8],
@@ -723,12 +770,13 @@ mod tests {
     fn unmerged_pr_is_refused() {
         let fx = Fixture::new(TaskKind::Ship, Phase::AwaitingMerge);
         let before = fx.task();
-        let fake = Fake::default().ok(&["gh"], r#"{"mergedAt":null,"state":"OPEN"}"#);
+        let fake = pr_view(Fake::default(), "OPEN");
         let run = fx.teardown(&fake, &[]);
         assert_eq!(
             run.result.unwrap_err().to_string(),
-            "fix-login-07's PR is OPEN; teardown needs it merged (or pass --abandon)"
+            "fix-login-07's PR is open; teardown needs it merged (or pass --abandon)"
         );
+        assert_eq!(fx.prs(), []);
         assert!(fake.done());
         assert_eq!(fx.task(), before);
         assert_eq!(fx.phases(), []);
@@ -784,12 +832,15 @@ mod tests {
     }
 
     #[test]
-    fn abandon_skips_github_and_keeps_an_unmerged_branch() {
+    fn abandon_records_the_pr_and_keeps_an_unmerged_branch() {
         let fx = Fixture::new(TaskKind::Ship, Phase::Working);
-        let fake = close(remove(stop(pull(Fake::default())), RETAINED_UNMERGED));
+        let fake = pr_view(Fake::default(), "CLOSED");
+        let fake = close(remove(stop(pull(fake)), RETAINED_UNMERGED));
         let run = fx.teardown(&fake, &["--abandon"]);
         run.result.unwrap();
-        assert!(fake.done(), "no gh, no -D");
+        assert!(fake.done(), "no -D");
+        assert_eq!(fx.prs(), [(PrState::Closed, 0)]);
+        assert_eq!(fx.status_pr(), Some(PrState::Closed));
         assert_eq!(
             run.err,
             "conductor: warning: kept branch conductor/fix-login-07: worktrunk doesn't see it \
@@ -810,15 +861,44 @@ mod tests {
     #[test]
     fn abandon_with_force_delete_branch_deletes_it() {
         let fx = Fixture::new(TaskKind::Ship, Phase::Abandoned);
-        let fake = remove(stop(pull(Fake::default())), RETAINED_UNMERGED);
+        let fake = pr_view(Fake::default(), "CLOSED");
+        let fake = remove(stop(pull(fake)), RETAINED_UNMERGED);
         let fake = close(remove(fake, "deleted"));
         let run = fx.teardown(&fake, &["--abandon", "--force-delete-branch"]);
         run.result.unwrap();
         assert!(fake.done());
-        assert_eq!(fake.argvs()[8].last().map(String::as_str), Some("-D"));
+        assert_eq!(fake.argvs()[9].last().map(String::as_str), Some("-D"));
         assert_eq!(run.err, "");
         assert_eq!(fx.task().phase, Phase::Abandoned);
         assert_eq!(fx.phases(), [], "already abandoned");
+    }
+
+    #[test]
+    fn abandon_without_github_warns_and_finishes() {
+        let fx = Fixture::new(TaskKind::Ship, Phase::AwaitingMerge);
+        fx.append(EventPayload::Pr {
+            state: PrState::Open,
+            checks: None,
+            review: None,
+        });
+        let fake = Fake::default().fail(&["gh", "pr", "view", PR], 1, "HTTP 502");
+        let fake = close(remove(stop(pull(fake)), "deleted"));
+        let run = fx.teardown(&fake, &["--abandon"]);
+        run.result.unwrap();
+        assert!(fake.done());
+        assert_eq!(
+            run.err,
+            "conductor: warning: cannot refresh fix-login-07's PR state: `gh pr view` failed \
+             (exit 1): HTTP 502; status shows the last-known state\n"
+        );
+        assert_eq!(fx.task().phase, Phase::Abandoned);
+        assert_eq!(fx.prs(), [(PrState::Open, 0)]);
+
+        // A scout task has no PR to refresh.
+        let fx = Fixture::new(TaskKind::Scout, Phase::Working);
+        let fake = close(remove(stop(pull(Fake::default())), "deleted"));
+        fx.teardown(&fake, &["--abandon"]).result.unwrap();
+        assert!(fake.argvs().iter().all(|argv| argv[0] != "gh"));
     }
 
     #[test]
@@ -1000,6 +1080,7 @@ mod tests {
                 ],
                 "{step}"
             );
+            assert_eq!(fx.prs(), [(PrState::Merged, 0)], "{step}");
         }
     }
 }

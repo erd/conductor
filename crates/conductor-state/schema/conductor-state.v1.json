@@ -444,7 +444,7 @@
           "type": "object"
         },
         {
-          "description": "`conductor watch` saw the task's PR change.",
+          "description": "The task's PR as `gh pr view` reported it: when `conductor watch` saw it change, when\n`conductor pr ready` marked it ready, or when `conductor teardown` checked it.",
           "properties": {
             "checks": {
               "anyOf": [
