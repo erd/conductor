@@ -7,29 +7,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, bail};
 use conductor_state::{
     CheckState, Event, EventPayload, PrState, ReviewDecision, append_event, read_task,
 };
 use jiff::{SignedDuration, Timestamp};
-use serde::{Deserialize, Serialize};
 
 use super::WatchState;
 use crate::log::append_log;
-use crate::runner::{Cmd, Runner, Tools, failure, parse_json};
+use crate::pr::{PrSnapshot, parse_view, view_cmd};
+use crate::runner::{Runner, Tools};
 
 /// The longest wait between retries of a failing `gh pr view`.
 const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
-
-/// What a `pr` event records about a PR, and what change detection compares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct PrSnapshot {
-    pub state: PrState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checks: Option<CheckState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review: Option<ReviewDecision>,
-}
 
 impl PrSnapshot {
     /// Why moving from `old` to `self` should wake the conductor: merged, closed, checks starting
@@ -53,91 +42,6 @@ impl PrSnapshot {
             reasons.push("PR changes requested");
         }
         reasons
-    }
-}
-
-/// The fields of `gh pr view --json state,isDraft,reviewDecision,statusCheckRollup`.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GhPrView {
-    state: String,
-    #[serde(default)]
-    is_draft: bool,
-    /// Empty when no review is required.
-    #[serde(default)]
-    review_decision: Option<String>,
-    #[serde(default)]
-    status_check_rollup: Option<Vec<GhCheck>>,
-}
-
-/// One entry of `statusCheckRollup`: a `CheckRun` has `status` and `conclusion`, a
-/// `StatusContext` has `state`.
-#[derive(Deserialize)]
-struct GhCheck {
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    conclusion: Option<String>,
-    #[serde(default)]
-    state: Option<String>,
-}
-
-impl GhCheck {
-    fn reduce(&self) -> CheckState {
-        if let Some(state) = &self.state {
-            return match state.as_str() {
-                "FAILURE" | "ERROR" => CheckState::Fail,
-                "PENDING" | "EXPECTED" => CheckState::Pending,
-                _ => CheckState::Pass,
-            };
-        }
-        if self.status.as_deref() != Some("COMPLETED") {
-            return CheckState::Pending;
-        }
-        match self.conclusion.as_deref() {
-            Some("FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE") => {
-                CheckState::Fail
-            }
-            _ => CheckState::Pass,
-        }
-    }
-}
-
-impl GhPrView {
-    fn snapshot(&self) -> anyhow::Result<PrSnapshot> {
-        let state = match self.state.as_str() {
-            "OPEN" if self.is_draft => PrState::Draft,
-            "OPEN" => PrState::Open,
-            "MERGED" => PrState::Merged,
-            "CLOSED" => PrState::Closed,
-            other => bail!("unknown PR state {other:?}"),
-        };
-        let review = match self.review_decision.as_deref() {
-            Some("APPROVED") => Some(ReviewDecision::Approved),
-            Some("CHANGES_REQUESTED") => Some(ReviewDecision::ChangesRequested),
-            Some("REVIEW_REQUIRED") => Some(ReviewDecision::ReviewRequired),
-            _ => None,
-        };
-        Ok(PrSnapshot {
-            state,
-            checks: rollup(self.status_check_rollup.as_deref().unwrap_or_default()),
-            review,
-        })
-    }
-}
-
-/// Any failing check fails the PR; otherwise any pending one keeps it pending. `None` when the PR
-/// has no checks.
-fn rollup(checks: &[GhCheck]) -> Option<CheckState> {
-    let states: Vec<CheckState> = checks.iter().map(GhCheck::reduce).collect();
-    if states.is_empty() {
-        None
-    } else if states.contains(&CheckState::Fail) {
-        Some(CheckState::Fail)
-    } else if states.contains(&CheckState::Pending) {
-        Some(CheckState::Pending)
-    } else {
-        Some(CheckState::Pass)
     }
 }
 
@@ -213,14 +117,7 @@ impl<'a> PrPoller<'a> {
                 continue;
             }
 
-            let cmd = Cmd::new(&self.tools.gh).args([
-                "pr",
-                "view",
-                &url,
-                "--json",
-                "state,isDraft,reviewDecision,statusCheckRollup",
-            ]);
-            let output = match self.runner.run(&cmd) {
+            let output = match self.runner.run(&view_cmd(self.tools, &url)) {
                 Ok(output) => output,
                 Err(err) => {
                     let msg = format!("{err:#}; PR polling disabled");
@@ -230,14 +127,7 @@ impl<'a> PrPoller<'a> {
                     return appended;
                 }
             };
-            let snapshot = if output.success() {
-                parse_json::<GhPrView>(&output.stdout)
-                    .context("unexpected `gh pr view` output")
-                    .and_then(|view| view.snapshot())
-            } else {
-                Err(failure("gh pr view", &output))
-            };
-            let snapshot = match snapshot {
+            let snapshot = match parse_view(&output) {
                 Ok(snapshot) => snapshot,
                 Err(err) => {
                     schedule.failures += 1;
@@ -310,7 +200,7 @@ mod tests {
     use conductor_state::{events_path, read_events};
 
     use super::*;
-    use crate::runner::{Fake, RunOutput};
+    use crate::runner::{Cmd, Fake, RunOutput};
 
     const INTERVAL: Duration = Duration::from_secs(120);
     const URL: &str = "https://github.com/erd/web/pull/42";
@@ -645,92 +535,6 @@ mod tests {
         assert!(fake.done());
         assert_eq!(repo.pr_events("pick-db-03").len(), 1);
         assert_eq!(repo.pr_events("add-docs-02").len(), 0);
-    }
-
-    #[test]
-    fn maps_gh_output() {
-        let snapshot = |json: &str| {
-            parse_json::<GhPrView>(json)
-                .and_then(|view| view.snapshot())
-                .map_err(|e| e.to_string())
-        };
-        assert_eq!(
-            snapshot(&view("OPEN", true, "", "")),
-            Ok(PrSnapshot {
-                state: PrState::Draft,
-                checks: None,
-                review: None,
-            })
-        );
-        assert_eq!(
-            snapshot(&view("MERGED", false, "APPROVED", PASS)),
-            Ok(PrSnapshot {
-                state: PrState::Merged,
-                checks: Some(CheckState::Pass),
-                review: Some(ReviewDecision::Approved),
-            })
-        );
-        assert_eq!(
-            snapshot(
-                r#"{"isDraft":false,"reviewDecision":null,"state":"CLOSED","statusCheckRollup":null}"#
-            ),
-            Ok(PrSnapshot {
-                state: PrState::Closed,
-                checks: None,
-                review: None,
-            })
-        );
-        assert_eq!(
-            snapshot(&view("LOCKED", false, "", "")),
-            Err("unknown PR state \"LOCKED\"".to_owned())
-        );
-    }
-
-    #[test]
-    fn rolls_up_checks() {
-        let reduce = |checks: &[&str]| {
-            let json = format!("[{}]", checks.join(","));
-            rollup(&serde_json::from_str::<Vec<GhCheck>>(&json).unwrap())
-        };
-        let status = |state: &str| format!(r#"{{"__typename":"StatusContext","state":"{state}"}}"#);
-        let run = |status: &str, conclusion: &str| {
-            format!(
-                r#"{{"__typename":"CheckRun","status":"{status}","conclusion":"{conclusion}"}}"#
-            )
-        };
-        assert_eq!(reduce(&[]), None);
-        assert_eq!(reduce(&[PASS]), Some(CheckState::Pass));
-        assert_eq!(
-            reduce(&[
-                PASS,
-                &run("COMPLETED", "SKIPPED"),
-                &run("COMPLETED", "NEUTRAL")
-            ]),
-            Some(CheckState::Pass)
-        );
-        assert_eq!(reduce(&[PASS, RUNNING]), Some(CheckState::Pending));
-        assert_eq!(
-            reduce(&[PASS, &run("QUEUED", "")]),
-            Some(CheckState::Pending)
-        );
-        assert_eq!(reduce(&[RUNNING, FAIL]), Some(CheckState::Fail));
-        for conclusion in [
-            "TIMED_OUT",
-            "CANCELLED",
-            "ACTION_REQUIRED",
-            "STARTUP_FAILURE",
-        ] {
-            assert_eq!(
-                reduce(&[&run("COMPLETED", conclusion)]),
-                Some(CheckState::Fail),
-                "{conclusion}"
-            );
-        }
-        assert_eq!(reduce(&[&status("SUCCESS")]), Some(CheckState::Pass));
-        assert_eq!(reduce(&[&status("PENDING")]), Some(CheckState::Pending));
-        assert_eq!(reduce(&[&status("EXPECTED")]), Some(CheckState::Pending));
-        assert_eq!(reduce(&[PASS, &status("ERROR")]), Some(CheckState::Fail));
-        assert_eq!(reduce(&[&status("FAILURE")]), Some(CheckState::Fail));
     }
 
     #[test]

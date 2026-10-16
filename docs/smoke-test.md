@@ -92,14 +92,16 @@ To force a decision, message the ship worker through the conductor right after i
 ## 5. Draft PR → ready → merged → automatic teardown
 
 - [ ] The ship worker pushes, opens a **draft** PR, and reports `done` with its URL.
-- [ ] The conductor wakes, reviews the diff, and either sends a fix-up or runs `gh pr ready`
-      and gives you the URL. The task moves to `awaiting_merge`.
-- [ ] `conductor status` shows the PR's checks and review state.
+- [ ] The conductor wakes, reviews the diff, and either sends a fix-up or runs
+      `conductor pr ready <id>` and gives you the URL. The task moves to `awaiting_merge`.
+- [ ] `conductor status` at once shows the PR as `open` (not `draft`), with its checks and
+      review state.
 - [ ] Merge the PR on GitHub (any merge style).
 - [ ] Within the PR poll interval, `conductor watch` wakes the conductor. The task moves to
       `merged`, and the conductor runs `conductor teardown` without being asked.
 - [ ] Teardown pulls `main` in the main checkout, stops the worker, removes the worktree and
-      branch, and closes the workspace. `conductor status --all` shows `torn_down`.
+      branch, and closes the workspace. `conductor status --all` shows `torn_down` and the PR
+      as `merged`.
 
 ## 6. Close the conductor's workspace, then resume
 

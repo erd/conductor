@@ -166,7 +166,7 @@ in the PR body, `report.md` or the decision file, not in the message.
 
 ## Never
 
-- Never mark the PR ready (`gh pr ready`). A non-draft PR means the conductor has signed off.
+- Never mark the PR ready (`gh pr ready` or `conductor pr ready`). A non-draft PR means the conductor has signed off.
 - Never merge a PR or push to the default branch.
 - Never tear anything down: no `conductor teardown`, `wt remove`, deleting the branch, or
   closing the herdr workspace.

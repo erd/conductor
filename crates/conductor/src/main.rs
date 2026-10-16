@@ -4,6 +4,7 @@ mod deck;
 mod hook;
 mod init;
 mod log;
+mod pr;
 mod report;
 mod resume;
 mod runner;
@@ -22,6 +23,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::context::Ctx;
 use crate::decision::DecisionCommand;
+use crate::pr::PrCommand;
 use crate::report::ReportArgs;
 use crate::resume::ResumeArgs;
 use crate::spawn::SpawnArgs;
@@ -82,6 +84,11 @@ enum Command {
         #[command(subcommand)]
         command: TaskCommand,
     },
+    /// Act on a ship task's PR on GitHub, recording its state for `conductor status`.
+    Pr {
+        #[command(subcommand)]
+        command: PrCommand,
+    },
     /// Start a briefed task's worker: create its worktree, open a herdr workspace for it, and run
     /// its Claude session there.
     ///
@@ -94,7 +101,8 @@ enum Command {
     /// checkout (or fetches, if it isn't checked out there and clean), so worktrunk can see the
     /// branch merged. Then stops the worker, removes the worktree and branch, closes the herdr
     /// workspace, and moves the task to `torn_down`, or `abandoned` with `--abandon`. If a step
-    /// fails, rerunning continues from it. Run from the repo.
+    /// fails, rerunning continues from it. Records the PR's state as `gh pr view` reports it, so
+    /// `conductor status --all` shows it merged or closed. Run from the repo.
     Teardown(TeardownArgs),
     /// Follow every live task's events and exit 2, waking the conductor, when one needs it.
     ///
@@ -148,6 +156,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Report(args) => report::run(args)?,
         Command::Decision { command } => decision::run(command)?,
         Command::Task { command } => task::run(command)?,
+        Command::Pr { command } => pr::run(command)?,
         Command::Spawn(args) => spawn::run(args)?,
         Command::Teardown(args) => teardown::run(args)?,
         Command::Watch(args) => return watch::run(args),

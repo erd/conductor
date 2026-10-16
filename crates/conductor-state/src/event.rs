@@ -128,7 +128,8 @@ pub enum EventPayload {
     DecisionAnswered { key: String },
     /// `conductor task phase`, from the conductor.
     Phase { from: Phase, to: Phase },
-    /// `conductor watch` saw the task's PR change.
+    /// The task's PR as `gh pr view` reported it: when `conductor watch` saw it change, when
+    /// `conductor pr ready` marked it ready, or when `conductor teardown` checked it.
     Pr {
         state: PrState,
         #[serde(default, skip_serializing_if = "Option::is_none")]

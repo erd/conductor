@@ -110,6 +110,7 @@ Workers never change a task's phase, so you keep it current:
 | its decisions are all answered (by you, the user, or the deck) | `conductor task phase <id> working` |
 | a worker reports done | `conductor task phase <id> review` |
 | you send fix-ups from review | `conductor task phase <id> working` |
+| you sign off a ship task's PR | `conductor pr ready <id>` (moves it to `awaiting_merge`) |
 
 A task in `needs_decision` with no open decisions in `conductor status` was answered from the
 deck: move it back to `working`.
@@ -169,12 +170,12 @@ For a large or subtle diff, hand it to a review subagent along with the brief.
 - **Good, and the checks pass:** sign it off. A non-draft PR always means you have.
 
   ```sh
-  gh pr ready <url>
-  conductor task phase <id> awaiting_merge
+  conductor pr ready <id>
   ```
 
-  Give the user the PR URL and a one-line summary. After a fix-up round on a PR that's
-  already ready, skip `gh pr ready`.
+  It marks the PR ready (unless it already is, as after a fix-up round), records its state for
+  `conductor status`, and moves the task to `awaiting_merge`. Give the user the PR URL and a
+  one-line summary.
 
 ### Scout tasks
 
@@ -193,8 +194,8 @@ conductor teardown <id>
 
 - **Checks failed or changes requested:** get the details (`gh pr checks <url>`,
   `gh pr view <url> --comments`), relay them to the worker, and run
-  `conductor task phase <id> working`. When it reports done again, review the new commits and
-  move it back to `awaiting_merge`.
+  `conductor task phase <id> working`. When it reports done again, move it to `review`,
+  review the new commits, and run `conductor pr ready <id>` again.
 - **Merged:** tear it down. Teardown confirms the merge on GitHub, pulls the default branch,
   stops the worker, removes the worktree and branch, and closes the workspace.
 
