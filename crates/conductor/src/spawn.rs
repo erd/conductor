@@ -92,7 +92,8 @@ fn spawn(
         bail!("branch {branch} already exists; pass --reuse-branch to spawn on it");
     }
     let session = ctx.worker_session(id);
-    let worker = worker_command(ctx, id, &session, &brief_path(&task_dir))?;
+    let brief = brief_path(&task_dir);
+    let worker = worker_command(ctx, id, &session, &Launch::Brief(&brief))?;
     let wt = wt_switch(tools, root, &branch, !branch_exists);
 
     if args.dry_run {
@@ -154,16 +155,8 @@ fn run_steps(
 
     let open = worktree_open(tools, root, &switch.path.to_string_lossy(), id);
     let output = check("herdr worktree open", runner.run(&open)?)?;
-    let json: Value =
-        parse_json(&output.stdout).context("unexpected `herdr worktree open` output")?;
-    let field = |pointer: &str| {
-        json.pointer(pointer)
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| anyhow!("`herdr worktree open` printed no {pointer}"))
-    };
-    created.herdr_workspace_id = Some(field("/result/workspace/workspace_id")?);
-    let pane = field("/result/root_pane/pane_id")?;
+    let (workspace, pane) = parse_worktree_open(&output.stdout)?;
+    created.herdr_workspace_id = Some(workspace);
     created.herdr_pane_id = Some(pane.clone());
 
     check(
@@ -204,10 +197,25 @@ fn wt_switch(tools: &Tools, root: &Path, branch: &str, create: bool) -> Cmd {
     cmd.arg(branch).args(["--no-cd", "--format=json"])
 }
 
+/// The workspace and root pane ids `herdr worktree open --json` printed.
+pub fn parse_worktree_open(stdout: &str) -> anyhow::Result<(String, String)> {
+    let json: Value = parse_json(stdout).context("unexpected `herdr worktree open` output")?;
+    let field = |pointer: &str| {
+        json.pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow!("`herdr worktree open` printed no {pointer}"))
+    };
+    Ok((
+        field("/result/workspace/workspace_id")?,
+        field("/result/root_pane/pane_id")?,
+    ))
+}
+
 /// `herdr worktree open` for the worktree at `path`. herdr refuses a linked worktree as `--cwd`,
 /// so this always passes the main checkout; that also folds the new workspace under the
 /// conductor's.
-fn worktree_open(tools: &Tools, root: &Path, path: &str, id: &str) -> Cmd {
+pub fn worktree_open(tools: &Tools, root: &Path, path: &str, id: &str) -> Cmd {
     Cmd::new(&tools.herdr)
         .args(["worktree", "open", "--cwd"])
         .arg(root.to_string_lossy())
@@ -215,35 +223,54 @@ fn worktree_open(tools: &Tools, root: &Path, path: &str, id: &str) -> Cmd {
 }
 
 /// `herdr pane run`, which types `line` into `pane`'s shell.
-fn pane_run(tools: &Tools, pane: &str, line: &str) -> Cmd {
+pub fn pane_run(tools: &Tools, pane: &str, line: &str) -> Cmd {
     Cmd::new(&tools.herdr).args(["pane", "run", pane, line])
+}
+
+/// What a worker's Claude session starts with.
+pub enum Launch<'a> {
+    /// A new session, told to read the brief at this path.
+    Brief(&'a Path),
+    /// An existing session, resumed by its id.
+    Resume(&'a str),
 }
 
 /// The shell line that starts the worker. It goes through `env` so it reads the same in bash,
 /// zsh and fish, and it sets the variables the worker's hooks and `conductor` calls need.
-fn worker_command(ctx: &Ctx, id: &str, session: &str, brief: &Path) -> anyhow::Result<String> {
-    let prompt = format!(
-        "Read your brief at {} and follow the conductor worker skill.",
-        brief.display()
-    );
+pub fn worker_command(
+    ctx: &Ctx,
+    id: &str,
+    session: &str,
+    launch: &Launch,
+) -> anyhow::Result<String> {
     let mut words = vec![
         "env".to_owned(),
         format!("CONDUCTOR_TASK_ID={id}"),
         format!("CONDUCTOR_REPO_ID={}", ctx.repo.id),
         format!("CONDUCTOR_HOME={}", ctx.home.root().display()),
         "claude".to_owned(),
+    ];
+    if let Launch::Resume(session_id) = launch {
+        words.extend(["--resume".to_owned(), (*session_id).to_owned()]);
+    }
+    words.extend([
         "-n".to_owned(),
         session.to_owned(),
         "--permission-mode".to_owned(),
         "auto".to_owned(),
-    ];
+    ]);
     if let Some(model) = &ctx.settings.model {
         words.extend(["--model".to_owned(), model.clone()]);
     }
     if let Some(effort) = &ctx.settings.effort {
         words.extend(["--effort".to_owned(), effort.clone()]);
     }
-    words.push(prompt);
+    if let Launch::Brief(brief) = launch {
+        words.push(format!(
+            "Read your brief at {} and follow the conductor worker skill.",
+            brief.display()
+        ));
+    }
     for word in &words {
         shell::check_typeable(word)?;
     }

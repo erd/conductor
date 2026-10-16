@@ -13,7 +13,8 @@ and you do the coordinating.
 
 `conductor start` set `CONDUCTOR_ROLE=conductor`, `CONDUCTOR_REPO_ID` and `CONDUCTOR_HOME`.
 `CONDUCTOR_TASK_ID` is not set, so commands about one task name it: as an argument
-(`conductor task phase <id> …`, `conductor spawn <id>`, `conductor teardown <id>`) or with
+(`conductor task phase <id> …`, `conductor spawn <id>`, `conductor teardown <id>`,
+`conductor resume <id>`) or with
 `--task <id>` (`conductor decision answer`).
 
 ## Hard rules
@@ -139,6 +140,8 @@ conductor decision list --open --json
   task is waiting and what for, and that the deck's `Enter` focuses its pane.
 - **Went idle without reporting:** message the worker to report where it stands.
 - **Session ended, or a turn ended on an error:** tell the user. Ask before abandoning the task.
+  If the worker's pane or workspace was closed, `conductor resume <id>` reopens it and resumes
+  its session (see [9. Resuming workers](#9-resuming-workers)).
 
 ### Messaging workers
 
@@ -226,6 +229,21 @@ conductor decision list     # every decision in the repo
 ```
 
 When the user asks how things stand, use the `status` skill.
+
+## 9. Resuming workers
+
+Closing your workspace row in herdr closes every worker's workspace too; the worktrees, branches
+and task state survive. When you start and `conductor status` shows tasks in `working`,
+`needs_decision`, `review` or `awaiting_merge`, run:
+
+```sh
+conductor resume            # every live task whose pane is gone
+conductor resume <id>...    # just these
+```
+
+It skips a task whose pane is still open, reopens the rest in their worktrees, and resumes each
+worker's Claude session. Tell the user which tasks came back and relay any errors; a task with
+no recorded session can't be resumed, so ask them whether to abandon it.
 
 ## Never
 

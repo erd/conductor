@@ -38,16 +38,7 @@ pub fn open(
         return Ok(());
     };
 
-    let mut list = Cmd::new(&tools.herdr).args(["pane", "list"]);
-    if let Some(workspace) = workspace {
-        list = list.args(["--workspace", workspace]);
-    }
-    let output = check("herdr pane list", runner.run(&list)?)?;
-    let panes: Response<PaneList> =
-        parse_json(&output.stdout).context("unexpected `herdr pane list` output")?;
-    if panes
-        .result
-        .panes
+    if list_panes(runner, tools, workspace)?
         .iter()
         .any(|p| p.label.as_deref() == Some(title))
     {
@@ -71,6 +62,22 @@ pub fn open(
     ]);
     check("herdr plugin pane open", runner.run(&open)?)?;
     Ok(())
+}
+
+/// herdr's open panes, in `workspace` if given, else everywhere.
+pub fn list_panes(
+    runner: &dyn Runner,
+    tools: &Tools,
+    workspace: Option<&str>,
+) -> anyhow::Result<Vec<Pane>> {
+    let mut list = Cmd::new(&tools.herdr).args(["pane", "list"]);
+    if let Some(workspace) = workspace {
+        list = list.args(["--workspace", workspace]);
+    }
+    let output = check("herdr pane list", runner.run(&list)?)?;
+    let panes: Response<PaneList> =
+        parse_json(&output.stdout).context("unexpected `herdr pane list` output")?;
+    Ok(panes.result.panes)
 }
 
 /// The envelope herdr's CLI prints its JSON results in.
@@ -105,9 +112,11 @@ struct PaneList {
     panes: Vec<Pane>,
 }
 
+/// The fields of a `herdr pane list` entry that conductor uses.
 #[derive(Deserialize)]
-struct Pane {
-    label: Option<String>,
+pub struct Pane {
+    pub pane_id: String,
+    pub label: Option<String>,
 }
 
 #[cfg(test)]

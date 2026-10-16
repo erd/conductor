@@ -343,14 +343,46 @@ fn bad_config_fails_and_names_the_file() {
 }
 
 #[test]
-fn resume_is_not_implemented_yet() {
+fn resume_with_no_live_tasks_does_nothing() {
     let fx = Fixture::new();
-    let output = fx.run(&fx.repo(), &["resume", "some", "--args"]);
+    let output = fx.run(&fx.repo(), &["resume"]);
+    assert_success(&output);
+    assert_eq!(stdout(&output), "no tasks to resume\n");
+    assert_eq!(fx.herdr_calls(), Vec::<String>::new());
+}
+
+#[test]
+fn resume_without_a_session_fails_and_names_the_task() {
+    let fx = Fixture::new();
+    let task_dir = fx.repo_dir().join("tasks/fix-login-07");
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let ts = "2026-10-14T12:00:00Z".parse().unwrap();
+    let task = Task {
+        schema: SchemaV1,
+        id: "fix-login-07".into(),
+        title: "Fix login".into(),
+        kind: TaskKind::Ship,
+        phase: Phase::Working,
+        branch: Some("task".into()),
+        worktree_path: Some(fx.worktree()),
+        session_name: None,
+        claude_session_id: None,
+        herdr_workspace_id: Some("w9".into()),
+        herdr_pane_id: Some("w9:p1".into()),
+        pr_url: None,
+        created_at: ts,
+        updated_at: ts,
+    };
+    write_task_atomic(&task_dir, &task).unwrap();
+
+    let output = fx.run(&fx.repo(), &["resume"]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         stderr(&output),
-        "conductor: `conductor resume` is not implemented yet\n"
+        "conductor: cannot resume fix-login-07: no session_start event recorded its Claude \
+         session id\nconductor: cannot resume 1 task\n"
     );
+    assert_eq!(fx.herdr_calls(), ["pane list"]);
 }
 
 #[test]
