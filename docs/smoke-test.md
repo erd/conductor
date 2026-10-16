@@ -68,7 +68,8 @@ Give the conductor a goal that splits into one change and one question, e.g.:
 
 ## 3. A decision answered from the conductor
 
-To force a decision, message the ship worker through the conductor:
+To force a decision, message the ship worker through the conductor right after it's spawned
+(a small task can open its draft PR within a minute):
 
 > Tell the fix task to open a decision asking whether to also add a test file, with options
 > `yes` and `no`, before it continues.
@@ -111,25 +112,28 @@ Set up a live task to resume:
 Close everything:
 
 - [ ] In herdr, close the conductor's workspace row. The worker's workspace closes with it.
+      From the CLI that's `herdr workspace close <id> --group`; without `--group`, herdr
+      refuses a workspace that has linked worktree workspaces.
 - [ ] `conductor status` still lists the task as `working`. Its activity may lag, since the
       session ended without a clean exit.
 - [ ] `ls .worktrees/` and `git branch` show the worktree and branch still there.
 
 Bring it back:
 
-- [ ] Open a new herdr workspace in the repo's main checkout and run `conductor start` (with
-      the same `CONDUCTOR_HOME`). A fresh conductor session starts.
-- [ ] `conductor resume --dry-run` prints a `herdr worktree open` and a `herdr pane run … claude
-      --resume <session-id> …` line for the task.
-- [ ] `conductor resume` (or ask the conductor to resume the workers) prints
-      `<id> resumed in pane <pane>`.
+- [ ] Open a new herdr workspace in the repo's main checkout. In its shell, before starting
+      the conductor, `conductor resume --dry-run` prints a `herdr worktree open` and a
+      `herdr pane run … claude --resume <session-id> …` line for the task.
+- [ ] Run `conductor start` there (with the same `CONDUCTOR_HOME`). The fresh conductor sees
+      the live task and runs `conductor resume` itself, which prints
+      `<id> resumed in pane <pane>`. If it doesn't, ask it to resume the workers.
 - [ ] A new workspace for the task appears under the conductor's. Its worker is the old
       session, with its history, in the worktree.
 - [ ] `conductor task show <id>` shows the new workspace and pane ids. `conductor status`
       shows live activity again once the worker does something.
 - [ ] Running `conductor resume` again prints `<id> skipped: pane <pane> is still open`.
-- [ ] The resumed worker can still reach the conductor: ask it, through the conductor, to
-      report its status. The report shows up in `conductor status`.
+- [ ] The resumed worker can still reach the new conductor: when it next reports (or when you
+      ask it to, through the conductor), the report shows up in `conductor status` and the
+      conductor acts on it.
 
 ## Cleanup
 
