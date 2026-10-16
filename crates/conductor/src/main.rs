@@ -5,6 +5,7 @@ mod hook;
 mod init;
 mod log;
 mod report;
+mod resume;
 mod runner;
 mod shell;
 mod spawn;
@@ -22,6 +23,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::context::Ctx;
 use crate::decision::DecisionCommand;
 use crate::report::ReportArgs;
+use crate::resume::ResumeArgs;
 use crate::spawn::SpawnArgs;
 use crate::task::TaskCommand;
 use crate::teardown::TeardownArgs;
@@ -103,8 +105,15 @@ enum Command {
     /// at the end of each log. Exits 0 after `--max-wait`, or at once if another watcher holds
     /// the repo's `watch.lock`.
     Watch(WatchArgs),
-    /// Reopen the workspaces and sessions of live tasks. Not implemented yet.
-    Resume(Stub),
+    /// Reopen the herdr workspace and Claude session of each live task whose pane is gone.
+    ///
+    /// For when closing the conductor's workspace row closed the workers' workspaces too. Covers
+    /// tasks in `working`, `needs_decision`, `review` or `awaiting_merge`, or just the ones named.
+    /// Skips a task whose herdr pane is still open. Otherwise opens its worktree in a new herdr
+    /// workspace, runs `claude --resume` there with the session id from its latest
+    /// `session_start` event, and records the workspace and pane in `task.json`. Run from the
+    /// repo, after `conductor start`.
+    Resume(ResumeArgs),
 }
 
 #[derive(Args)]
@@ -114,13 +123,6 @@ struct HookArgs {
     /// Ignored, so an unexpected argument can't make the hook fail.
     #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
     _rest: Vec<String>,
-}
-
-/// Arguments for a command that isn't implemented yet; its own issue defines them.
-#[derive(Args)]
-struct Stub {
-    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
-    _args: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -149,12 +151,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Spawn(args) => spawn::run(args)?,
         Command::Teardown(args) => teardown::run(args)?,
         Command::Watch(args) => return watch::run(args),
-        Command::Resume(_) => return Ok(not_implemented("resume")),
+        Command::Resume(args) => resume::run(args)?,
     }
     Ok(ExitCode::SUCCESS)
-}
-
-fn not_implemented(name: &str) -> ExitCode {
-    eprintln!("conductor: `conductor {name}` is not implemented yet");
-    ExitCode::FAILURE
 }

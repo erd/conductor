@@ -282,6 +282,30 @@ stateDiagram-v2
    4. Close the herdr workspace.
    5. Report to me.
 
+### Resume
+
+Closing the conductor's workspace row in herdr closes every worker workspace
+folded under it. The worktrees, branches and task state survive. To get the
+workers back, rerun `conductor start`, then `conductor resume [<task>...]`.
+With no ids it covers every task in `working`, `needs_decision`, `review` or
+`awaiting_merge`. It lists herdr's panes once, skips a task whose recorded pane
+is still open, and for each of the others:
+
+1. takes the session id from the task's latest `session_start` event, and
+   fails that task with a clear error if there is none;
+2. runs `herdr worktree open --cwd <repo-root> --path <worktree> --label
+   <task> --no-focus --json`, and records the new workspace and pane ids in
+   `task.json` straight away, so teardown can close them even if the next step
+   fails;
+3. runs `herdr pane run <pane> "env … claude --resume <session-id> -n
+   <repo>-<task> --permission-mode auto"`, with the same environment,
+   `--model`/`--effort` and quoting as spawn.
+
+The phase doesn't change. One task failing doesn't stop the rest; resume exits
+non-zero at the end if any failed. `--dry-run` prints the commands without
+running them. Restoring the conductor's own session is out of scope:
+`conductor start` starts a fresh one.
+
 ### Worker protocol (`worker` skill)
 
 - Read the brief, and work only inside the worktree.
@@ -487,9 +511,8 @@ Kept from firstmate:
   depends on recomputing the ratio on every `layout.updated`. Verify this
   doesn't fight manual resizes.
 - **Closing the conductor's workspace row closes every worker workspace.** The
-  worktrees and branches survive. Planned `conductor resume`: reopen each live
-  task with `herdr worktree open`, then `claude --resume <session-id> -n
-  <name>`.
+  worktrees and branches survive, and `conductor resume` reopens the workers
+  (see [Resume](#resume)). The conductor's own session starts fresh.
 - **Auto mode reviews every `SendMessage` before sending it.** That adds
   latency and the possibility of a refusal. Watch for this once real tasks run.
 - **Nothing in `asyncRewake` tells the conductor what woke it.** It has to read

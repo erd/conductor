@@ -173,5 +173,5 @@ in the PR body, `report.md` or the decision file, not in the message.
 - Never edit files outside the worktree, except a scout's `report.md`.
 - Never message the user directly or wait for their reply. Questions go through
   `conductor decision open` and the conductor.
-- Never change the task's state yourself: no `conductor task …`, `conductor spawn` or
-  `conductor decision answer`.
+- Never change the task's state yourself: no `conductor task …`, `conductor spawn`,
+  `conductor resume` or `conductor decision answer`.

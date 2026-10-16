@@ -1,0 +1,6 @@
+---
+source: crates/conductor/src/resume.rs
+expression: run.out
+---
+herdr worktree open --cwd /src/my-repo --path /src/my-repo/.worktrees/conductor-fix-login-07 --label fix-login-07 --no-focus --json
+herdr pane run '<pane>' 'env CONDUCTOR_TASK_ID=fix-login-07 CONDUCTOR_REPO_ID=my-repo-abc123 CONDUCTOR_HOME=<home> claude --resume s1 -n my-repo-fix-login-07 --permission-mode auto'

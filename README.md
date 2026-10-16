@@ -56,6 +56,13 @@ conductor start
 This records the repo in `~/.config/conductor` and starts the conductor's Claude session.
 `conductor --help` lists the other commands.
 
+Closing the conductor's workspace in herdr also closes every worker's workspace. The worktrees
+and task state survive: run `conductor start` again, then `conductor resume` to reopen each
+worker in its worktree and resume its Claude session.
+
+[`docs/smoke-test.md`](docs/smoke-test.md) is a manual end-to-end checklist for the whole
+system.
+
 ## Development
 
 The toolchain is pinned in `rust-toolchain.toml`; use rustup so it is picked up automatically.
