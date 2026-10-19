@@ -1,0 +1,31 @@
+# Release config for release-plz (https://release-plz.dev). The crates aren't published, so
+# release-plz reads the last release from the `v*` git tags, and both crates share the workspace
+# version, released as a single `v<version>` tag and GitHub release.
+
+[workspace]
+git_only = true
+# Only release when a release PR merges, not on every push to main.
+release_always = false
+# A `feat:` bumps minor even before 1.0, so a release with new features never reads as a patch.
+features_always_increment_minor = true
+# cargo-semver-checks compares against a published crate; there is none.
+semver_check = false
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
+
+[[package]]
+name = "conductor"
+version_group = "conductor"
+git_tag_name = "v{{ version }}"
+git_tag_enable = true
+git_release_enable = true
+changelog_update = true
+changelog_path = "CHANGELOG.md"
+changelog_include = ["conductor-state"]
+
+# Rides along with conductor: same version and tags, but no tag, release or changelog of its own.
+[[package]]
+name = "conductor-state"
+version_group = "conductor"
+git_tag_name = "v{{ version }}"

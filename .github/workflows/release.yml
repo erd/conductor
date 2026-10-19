@@ -1,0 +1,126 @@
+name: Create Release
+
+# Opens a release PR that bumps the workspace version, Cargo.lock and CHANGELOG.md. Merging it
+# tags and publishes the release (see publish-release.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. 1.2.3. Leave blank to pick the next version from the commits since the last release.
+        required: false
+        type: string
+      dry_run:
+        description: Only report the version that would be released
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-pr:
+    name: release PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are cut from main, not ${GITHUB_REF_NAME}"
+          exit 1
+
+      # Pushes and opens the PR as the release app rather than GITHUB_TOKEN, so CI runs on it.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      # Full history and tags, to find the last release and the commits since it.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      # Installs the toolchain and components pinned in rust-toolchain.toml.
+      - run: rustup show
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: release-plz
+
+      - name: Update version and changelog
+        id: update
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          bot="${APP_SLUG}[bot]"
+          git config user.name "$bot"
+          git config user.email "$(gh api "/users/$bot" --jq .id)+$bot@users.noreply.github.com"
+
+          base=$(git rev-parse HEAD)
+          echo "base=$base" >>"$GITHUB_OUTPUT"
+
+          # release-plz keeps a version already set in Cargo.toml, so a requested version is
+          # committed first (release-plz needs a clean tree) and folded into the release commit.
+          if [[ -n "$REQUESTED" ]]; then
+            requested=${REQUESTED#v}
+            if [[ ! "$requested" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Version '$REQUESTED' is not MAJOR.MINOR.PATCH"
+              exit 1
+            fi
+            sed -i "/^\[workspace\.package\]/,/^\[/s/^version = \".*\"/version = \"$requested\"/" Cargo.toml
+            git diff --quiet || git commit -qam "chore: Set version to $requested"
+          fi
+
+          release-plz update
+          git add -A
+          if git diff --cached --quiet "$base"; then
+            echo "::error::Nothing to release"
+            exit 1
+          fi
+
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          # release-plz bumps past a requested version that isn't newer than the last release.
+          if [[ -n "$REQUESTED" && "$version" != "$requested" ]]; then
+            echo "::error::Version $requested is not newer than the last release"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::Tag v$version already exists"
+            exit 1
+          fi
+          echo "tag=v$version" >>"$GITHUB_OUTPUT"
+          {
+            echo "Next release: **v$version**"
+            echo
+            # The new section, between `## [Unreleased]` and the previous release.
+            awk '/^## \[/ { n++; if (n == 3) exit } n == 2' CHANGELOG.md
+          } | tee -a "$GITHUB_STEP_SUMMARY" >"$RUNNER_TEMP/notes.md"
+
+      - name: Open release PR
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.update.outputs.tag }}
+          BASE: ${{ steps.update.outputs.base }}
+        run: |
+          set -euo pipefail
+          # Supersede any release PR that is still open.
+          gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("release-plz-")) | .number' |
+            xargs -r -n1 gh pr close --delete-branch --comment "Superseded by the $TAG release PR."
+
+          git reset -q --soft "$BASE"
+          git commit -qm "chore: Release $TAG"
+          # publish-release.yml releases only merges from branches with the release-plz- prefix.
+          branch="release-plz-$TAG"
+          git push --force origin "HEAD:refs/heads/$branch"
+          gh pr create --base main --head "$branch" --title "chore: Release $TAG" --body-file "$RUNNER_TEMP/notes.md"
