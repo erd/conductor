@@ -141,7 +141,9 @@ conductor decision list --open --json
   If `conductor decision list --open --task <id>` still lists it, ask the worker whether the
   user answered there; the worker records the answer itself.
 - **Needs permission or other attention:** you can't answer the prompt. Tell the user which
-  task is waiting and what for, and that the deck's `Enter` focuses its pane.
+  task is waiting and what for, and that the deck's `Enter` focuses its pane. A permission wake
+  carries the whole command, so quote the parts that decide whether it's safe (a write flag, a
+  prod target) rather than sending the user to the pane just to read it.
 - **Went idle without reporting:** message the worker to report where it stands.
 - **Session ended, or a turn ended on an error:** tell the user. Ask before abandoning the task.
   If the worker's pane or workspace was closed, `conductor resume <id>` reopens it and resumes

@@ -161,6 +161,23 @@ fn permission_prompt_wakes_and_names_the_tool() {
 }
 
 #[test]
+fn permission_prompt_wakes_with_the_whole_command() {
+    let fx = Fixture::new();
+    let watch = fx.start("1m");
+    fx.append(
+        TASK_ID,
+        &[
+            r#"{"kind":"tool_start","tool_name":"Bash","summary":"cd /src/my-repo/.worktrees/fix-login-07 && uv run cli meeting merge 15488 15417 --…","command":"cd /src/my-repo/.worktrees/fix-login-07 && uv run cli meeting merge 15488 15417 --allow-discard --stage prod --commit","tool_use_id":"tu1"}"#,
+            r#"{"kind":"attention","type":"permission_prompt","message":"Claude needs your permission"}"#,
+        ],
+    );
+    assert_wakes(
+        &finish(watch),
+        "fix-login-07: needs permission (Bash: cd /src/my-repo/.worktrees/fix-login-07 && uv run cli meeting merge 15488 15417 --allow-discard --stage prod --commit)\n",
+    );
+}
+
+#[test]
 fn each_wake_condition_wakes() {
     let cases = [
         (

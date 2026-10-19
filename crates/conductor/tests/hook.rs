@@ -151,6 +151,30 @@ fn fixtures_produce_expected_events() {
     }
 }
 
+/// A command that escapes past the event line cap still gets its `tool_start`, without
+/// `command`.
+#[test]
+fn oversized_command_is_dropped_not_the_event() {
+    let fx = Fixture::new();
+    let input = serde_json::json!({
+        "session_id": "abc123",
+        "tool_name": "Bash",
+        // Each control character escapes to six bytes of JSON.
+        "tool_input": {"command": "\u{1}".repeat(1000)},
+        "tool_use_id": "toolu_01ABC126",
+    });
+    let output = run_with_stdin(&mut fx.worker("pre-tool-use"), &input.to_string());
+    assert_silent_success(&output);
+    assert!(!fx.log().exists(), "{}", read_lines(&fx.log()).join("\n"));
+
+    let lines = read_lines(&fx.events());
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let event: Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(event["kind"], "tool_start");
+    assert_eq!(event["tool_use_id"], "toolu_01ABC126");
+    assert!(event.get("command").is_none(), "{event}");
+}
+
 #[test]
 fn fast_path_reads_no_stdin_and_creates_no_files() {
     let tmp = tempfile::tempdir().unwrap();

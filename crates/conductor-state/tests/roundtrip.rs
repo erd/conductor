@@ -175,7 +175,22 @@ fn event_samples() -> Vec<(Value, EventPayload)> {
             EventPayload::ToolStart {
                 tool_name: "Edit".into(),
                 summary: Some("src/x.rs".into()),
+                command: None,
                 tool_use_id: Some("toolu_1".into()),
+            },
+        ),
+        (
+            json!({
+                "kind": "tool_start",
+                "tool_name": "Bash",
+                "summary": "cd /src/x && uv run cli merge",
+                "command": "cd /src/x && uv run cli merge --stage prod --commit",
+            }),
+            EventPayload::ToolStart {
+                tool_name: "Bash".into(),
+                summary: Some("cd /src/x && uv run cli merge".into()),
+                command: Some("cd /src/x && uv run cli merge --stage prod --commit".into()),
+                tool_use_id: None,
             },
         ),
         (
