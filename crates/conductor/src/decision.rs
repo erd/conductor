@@ -1,15 +1,19 @@
 //! `conductor decision open|answer|list`. A worker opens a decision; the conductor or the deck
-//! answers it. Each writes `decisions/<key>.json` first and then appends its event, so whoever
-//! sees the event finds the file already updated.
+//! answers it, or the worker records the answer the user gave in its pane. Each writes
+//! `decisions/<key>.json` first and then appends its event, so whoever sees the event finds the
+//! file already updated. Answering a task's last open decision moves it from `needs_decision`
+//! back to `working`.
 
 use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context as _, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use conductor_state::{
-    Answer, AnsweredBy, Decision, DecisionOption, Event, EventPayload, SchemaV1, append_event,
-    decision_path, read_decision, read_decisions, task_ids, write_decision_atomic,
+    Answer, AnsweredBy, Decision, DecisionOption, Event, EventPayload, Phase, SchemaV1,
+    append_event, decision_path, read_decision, read_decisions, read_task, task_ids,
+    write_decision_atomic,
 };
 use jiff::Timestamp;
 use serde::Serialize;
@@ -17,6 +21,7 @@ use serde::Serialize;
 use crate::context::{Target, TargetArgs, env_var};
 use crate::status::snake_case;
 use crate::table::{self, cut};
+use crate::task::move_phase;
 
 /// Longest title the list table shows before cutting it with `…`.
 const MAX_TITLE: usize = 50;
@@ -27,7 +32,11 @@ pub enum DecisionCommand {
     ///
     /// Fails if a decision with the same key is still open; an answered one is replaced.
     Open(OpenArgs),
-    /// Answer an open decision.
+    /// Answer an open decision. Answering the task's last open one moves it from
+    /// `needs_decision` back to `working`.
+    ///
+    /// A worker may only record an answer the user gave in its pane: `--by user`, for its own
+    /// task.
     Answer(AnswerArgs),
     /// List decisions: the task's, or every task's in the repo when no task is given.
     List(ListArgs),
@@ -156,6 +165,16 @@ fn open(args: &OpenArgs) -> anyhow::Result<()> {
 
 fn answer(args: &AnswerArgs) -> anyhow::Result<()> {
     check_key(&args.key)?;
+    let role = env_var("CONDUCTOR_ROLE");
+    let worker_task = env_var("CONDUCTOR_TASK_ID").filter(|_| role.as_deref() != Some("conductor"));
+    if let Some(own) = &worker_task {
+        if args.target.task.as_ref().is_some_and(|task| task != own) {
+            bail!("a worker can only answer its own task's decisions");
+        }
+        if args.by.is_some_and(|by| !matches!(by, By::User)) {
+            bail!("a worker can only record the user's answer: use --by user");
+        }
+    }
     let target = Target::resolve(&args.target)?;
     let task_id = target.task_id()?;
     let task_dir = target.task_dir()?;
@@ -185,7 +204,7 @@ fn answer(args: &AnswerArgs) -> anyhow::Result<()> {
 
     let by = args.by.map_or_else(
         || {
-            if env_var("CONDUCTOR_ROLE").as_deref() == Some("conductor") {
+            if role.as_deref() == Some("conductor") {
                 AnsweredBy::Conductor
             } else {
                 AnsweredBy::User
@@ -206,7 +225,30 @@ fn answer(args: &AnswerArgs) -> anyhow::Result<()> {
         EventPayload::DecisionAnswered {
             key: args.key.clone(),
         },
-    )
+    )?;
+    resume_if_answered(&task_dir)
+}
+
+/// Moves the task in `task_dir` from `needs_decision` back to `working` once none of its
+/// decisions is open. A missing `task.json` is skipped: the answer is already recorded.
+fn resume_if_answered(task_dir: &Path) -> anyhow::Result<()> {
+    if read_decisions(task_dir)?.iter().any(|d| d.answer.is_none()) {
+        return Ok(());
+    }
+    let mut task = match read_task(task_dir) {
+        Ok(task) => task,
+        Err(conductor_state::Error::Io { source, .. }) if source.kind() == ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(err) => {
+            eprintln!("conductor: warning: not moving the task back to working: {err}");
+            return Ok(());
+        }
+    };
+    if task.phase == Phase::NeedsDecision {
+        move_phase(task_dir, &mut task, Phase::Working)?;
+    }
+    Ok(())
 }
 
 /// One element of `decision list --json`: the decision's own fields plus its task.

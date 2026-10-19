@@ -43,6 +43,28 @@ impl Fixture {
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
     }
 
+    /// Writes the task's `task.json` in `phase`.
+    fn write_task(&self, phase: &str) {
+        let task = json!({
+            "schema": "conductor-state.v1",
+            "id": TASK_ID,
+            "title": "Fix login",
+            "kind": "ship",
+            "phase": phase,
+            "created_at": "2026-10-14T11:56:00Z",
+            "updated_at": "2026-10-14T12:15:00Z",
+        });
+        let path = self.task_dir(TASK_ID).join("task.json");
+        std::fs::write(path, serde_json::to_vec_pretty(&task).unwrap()).unwrap();
+    }
+
+    /// The phase in the task's `task.json`.
+    fn phase(&self) -> Value {
+        let path = self.task_dir(TASK_ID).join("task.json");
+        let task: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        task["phase"].clone()
+    }
+
     /// Every event in the task's log.
     fn events(&self) -> Vec<Value> {
         let path = self.task_dir(TASK_ID).join("events.jsonl");
@@ -351,6 +373,93 @@ fn answered_by_defaults_from_role() {
     assert_success(&fx.worker(&["decision", "open", "x", "--title", "X", "--option", "a=A"]));
     assert_success(&fx.outside(&["decision", "answer", "x", "a"]));
     assert_eq!(fx.decision_file("x")["answer"]["answered_by"], "user");
+}
+
+#[test]
+fn answering_the_last_open_decision_resumes_the_task() {
+    let fx = Fixture::new();
+    fx.write_task("needs_decision");
+    assert_success(&fx.open_db());
+    assert_success(&fx.worker(&["decision", "open", "x", "--title", "X", "--option", "a=A"]));
+
+    let first = fx.outside(&["decision", "answer", "db", "pg", "--by", "deck"]);
+    assert_success(&first);
+    assert_eq!(fx.phase(), "needs_decision");
+
+    let last = fx.outside(&["decision", "answer", "x", "a", "--by", "deck"]);
+    assert_success(&last);
+    assert!(last.stdout.is_empty() && last.stderr.is_empty());
+    assert_eq!(fx.phase(), "working");
+    let events = fx.events();
+    assert_eq!(
+        kinds(&events),
+        [
+            kind_key("decision_open", "db"),
+            kind_key("decision_open", "x"),
+            kind_key("decision_answered", "db"),
+            kind_key("decision_answered", "x"),
+            kind_key("phase", ""),
+        ]
+    );
+    assert_eq!(events[4]["from"], "needs_decision");
+    assert_eq!(events[4]["to"], "working");
+}
+
+#[test]
+fn answering_leaves_other_phases_alone() {
+    let fx = Fixture::new();
+    fx.write_task("working");
+    assert_success(&fx.open_db());
+    assert_success(&fx.outside(&["decision", "answer", "db", "pg"]));
+    assert_eq!(fx.phase(), "working");
+    assert_eq!(
+        kinds(&fx.events()),
+        [
+            kind_key("decision_open", "db"),
+            kind_key("decision_answered", "db"),
+        ]
+    );
+}
+
+#[test]
+fn worker_records_the_users_answer_from_its_pane() {
+    let fx = Fixture::new();
+    fx.write_task("needs_decision");
+    assert_success(&fx.open_db());
+
+    let as_conductor = fx.worker(&["decision", "answer", "db", "pg", "--by", "conductor"]);
+    assert_fails_with(
+        &as_conductor,
+        "conductor: a worker can only record the user's answer: use --by user",
+    );
+    let as_deck = fx.worker(&["decision", "answer", "db", "pg", "--by", "deck"]);
+    assert_fails_with(&as_deck, "use --by user");
+    let other_task = fx.worker(&["decision", "answer", "db", "pg", "--task", "add-docs-02"]);
+    assert_fails_with(
+        &other_task,
+        "conductor: a worker can only answer its own task's decisions",
+    );
+    assert!(fx.decision_file("db").get("answer").is_none());
+    assert_eq!(fx.phase(), "needs_decision");
+
+    let answer = fx.worker(&[
+        "decision",
+        "answer",
+        "db",
+        "pg",
+        "--by",
+        "user",
+        "--note",
+        "Plan is approved",
+        "--task",
+        TASK_ID,
+    ]);
+    assert_success(&answer);
+    let file = fx.decision_file("db");
+    assert_eq!(file["answer"]["value"], "pg");
+    assert_eq!(file["answer"]["answered_by"], "user");
+    assert_eq!(file["answer"]["note"], "Plan is approved");
+    assert_eq!(fx.phase(), "working");
 }
 
 #[test]

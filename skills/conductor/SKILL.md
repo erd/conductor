@@ -90,8 +90,8 @@ You're woken by:
 - a message from a worker;
 - a wake summary from `conductor watch`, one line per task, e.g.
   ``fix-login-07: opened decision `db` ``, `needs permission (Bash: rm -rf build)`,
-  `went idle without reporting`, `session ended (…)`, or a PR change: merged, closed, checks
-  failed, changes requested;
+  `went idle without reporting`, ``got a prompt while decision `db` is open``,
+  `session ended (…)`, or a PR change: merged, closed, checks failed, changes requested;
 - an idle notice for a worker you messaged with `notify_when_idle: true`.
 
 Whatever woke you, start with:
@@ -102,18 +102,18 @@ conductor status
 
 ### Phases
 
-Workers never change a task's phase, so you keep it current:
+Workers never change a task's phase with `conductor task`, so you keep it current:
 
 | When | Run |
 |---|---|
 | a worker opens a decision | `conductor task phase <id> needs_decision` |
-| its decisions are all answered (by you, the user, or the deck) | `conductor task phase <id> working` |
+| its decisions are all answered (by you, the user, the deck, or the worker recording the user's in-pane answer) | nothing: answering the last open decision moves it back to `working` |
 | a worker reports done | `conductor task phase <id> review` |
 | you send fix-ups from review | `conductor task phase <id> working` |
 | you sign off a ship task's PR | `conductor pr ready <id>` (moves it to `awaiting_merge`) |
 
-A task in `needs_decision` with no open decisions in `conductor status` was answered from the
-deck: move it back to `working`.
+If `conductor status` still shows a task in `needs_decision` with no open decisions, move it
+back with `conductor task phase <id> working`.
 
 ### Decisions
 
@@ -137,6 +137,9 @@ conductor decision list --open --json
 
 ### Other wakes
 
+- **Got a prompt while a decision is open:** the user may have answered it in the worker's pane.
+  If `conductor decision list --open --task <id>` still lists it, ask the worker whether the
+  user answered there; the worker records the answer itself.
 - **Needs permission or other attention:** you can't answer the prompt. Tell the user which
   task is waiting and what for, and that the deck's `Enter` focuses its pane.
 - **Went idle without reporting:** message the worker to report where it stands.

@@ -169,13 +169,16 @@ Every event carries `ts`, `task`, `kind`, and `session_id` (when known).
 | `turn_end` | Stop / StopFailure hooks | `error?` |
 | `session_end` | SessionEnd hook | `reason` |
 | `status` | `conductor report <verb> ["<text>"] [--pr <url>]` (worker) | verb: `working`, `blocked`, `done`, `failed`, plus text, `pr_url?` |
-| `decision_open` / `decision_answered` | `conductor decision open` (worker) / `conductor decision answer` (the deck or the conductor) | `key` |
-| `phase` | `conductor task phase …` (conductor) | `from`, `to` |
+| `decision_open` / `decision_answered` | `conductor decision open` (worker) / `conductor decision answer` (the deck, the conductor, or the worker recording an answer the user gave in its pane) | `key` |
+| `phase` | `conductor task phase …` (conductor); `conductor decision answer`, when it answers the last open decision of a task in `needs_decision` | `from`, `to` |
 | `pr` | `conductor watch` polling `gh pr view`; `conductor pr ready`; `conductor teardown` | `state` (draft, open, merged, closed), `checks` (pass, fail, pending), `review` (`reviewDecision`) |
 
 Live activity on a card comes from the most recent hook events: working on
 `Edit src/x.rs`, waiting on a permission prompt, idle, or exited. The task's
-`phase` is a separate field and changes only on purpose.
+`phase` is a separate field and changes only on purpose: through `conductor task phase`
+and the commands built on it, and when `conductor decision answer` answers
+the last open decision of a task in `needs_decision`, which moves it back to
+`working`.
 
 ## Task lifecycle (the executive-assistant workflow)
 
@@ -198,7 +201,7 @@ stateDiagram-v2
     briefed --> spawning
     spawning --> working
     working --> needs_decision: decision opened
-    needs_decision --> working: answered
+    needs_decision --> working: last decision answered
     working --> review: worker reports done (draft PR open)
     review --> working: fix-up requests
     review --> awaiting_merge: conductor marks PR ready
@@ -355,8 +358,9 @@ forgets to report, so there is a backstop:
   watch`) exits 0 at once unless `CONDUCTOR_ROLE=conductor`. This
   is the same technique firstmate uses. `conductor watch` follows every task's
   `events.jsonl` and exits 2, which wakes the conductor, on any of:
-  `attention`, `turn_end` without a matching `status` report, `session_end`, or
-  `decision_open`. It writes a short wake summary to stderr, one line per
+  `attention`, `turn_end` without a matching `status` report, `session_end`,
+  `decision_open`, or the first `prompt` while a decision is open (the user
+  may have answered it in the worker's pane). It writes a short wake summary to stderr, one line per
   task, e.g. `fix-login-07: needs permission (Bash: rm -rf build)`. An
   `idle_prompt` attention doesn't wake it: Claude sends one a minute after
   every turn ends, and the `turn_end` rule already covers that. A turn that

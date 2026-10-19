@@ -239,6 +239,28 @@ fn a_restarted_watcher_does_not_wake_on_the_same_events() {
 }
 
 #[test]
+fn a_prompt_while_a_decision_is_open_wakes_the_next_watcher() {
+    let fx = Fixture::new();
+    let watch = fx.start("1m");
+    fx.append(
+        TASK_ID,
+        &[r#"{"kind":"decision_open","key":"approve-plan"}"#],
+    );
+    assert_wakes(
+        &finish(watch),
+        "fix-login-07: opened decision `approve-plan`\n",
+    );
+
+    // The user answers in the worker's pane; nothing records the answer.
+    let watch = fx.restart("1m");
+    fx.append(TASK_ID, &[r#"{"kind":"prompt","text":"Plan is approved"}"#]);
+    assert_wakes(
+        &finish(watch),
+        "fix-login-07: got a prompt while decision `approve-plan` is open\n",
+    );
+}
+
+#[test]
 fn a_restarted_watcher_wakes_on_events_since_it_last_ran() {
     let fx = Fixture::new();
     assert_times_out(&finish(fx.start("1s")));
