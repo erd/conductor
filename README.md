@@ -87,6 +87,14 @@ claude --plugin-dir .
 CI checks the plugin and marketplace manifests with `claude plugin validate .`. It warns that
 `plugin.json` has no `version`; that's intended, so installs follow the latest commit.
 
+### Releasing
+
+Run the **Create Release** workflow from the Actions tab. It uses
+[release-plz](https://release-plz.dev) to pick the next version from the conventional commits
+since the last `v*` tag (or takes the version you enter), and opens a PR that bumps the workspace
+version, `Cargo.lock` and `CHANGELOG.md`. Merging that PR tags `v<version>` and creates the GitHub
+release. `release-plz.toml` holds the config.
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
