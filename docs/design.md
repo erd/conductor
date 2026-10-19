@@ -358,9 +358,13 @@ forgets to report, so there is a backstop:
   watch`) exits 0 at once unless `CONDUCTOR_ROLE=conductor`. This
   is the same technique firstmate uses. `conductor watch` follows every task's
   `events.jsonl` and exits 2, which wakes the conductor, on any of:
-  `attention`, `turn_end` without a matching `status` report, `session_end`,
-  `decision_open`, or the first `prompt` while a decision is open (the user
-  may have answered it in the worker's pane). It writes a short wake summary to stderr, one line per
+  `attention`, `turn_end` without a `status` report since the last prompt
+  from the user or the conductor (once per prompt, and not while a decision is
+  open), `session_end`, `decision_open`, or the first `prompt` while a decision
+  is open (the user may have answered it in the worker's pane). A prompt the
+  harness injects when a background shell or subagent finishes
+  (`<task-notification>`) counts for neither rule: it starts a turn, but asks
+  nothing of the worker. It writes a short wake summary to stderr, one line per
   task, e.g. `fix-login-07: needs permission (Bash: rm -rf build)`. A
   permission wake shows the latest tool's whole command, with newlines as `\n`. An
   `idle_prompt` attention doesn't wake it: Claude sends one a minute after

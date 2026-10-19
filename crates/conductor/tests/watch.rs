@@ -224,6 +224,23 @@ fn noise_and_reported_turns_do_not_wake() {
 }
 
 #[test]
+fn turns_started_by_background_jobs_do_not_wake() {
+    let fx = Fixture::new();
+    let watch = fx.start("2s");
+    fx.append(
+        TASK_ID,
+        &[
+            r#"{"kind":"prompt","text":"go"}"#,
+            r#"{"kind":"status","verb":"working","text":"plan.sh running"}"#,
+            r#"{"kind":"turn_end"}"#,
+            r#"{"kind":"prompt","text":"<task-notification>"}"#,
+            r#"{"kind":"turn_end"}"#,
+        ],
+    );
+    assert_times_out(&finish(watch));
+}
+
+#[test]
 fn history_before_the_first_run_does_not_wake() {
     let fx = Fixture::new();
     fx.append(

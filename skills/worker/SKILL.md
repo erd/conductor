@@ -169,8 +169,11 @@ For a scout, a fix-up means updating `report.md` and running `conductor report d
 
 ## 7. When stuck
 
-Every turn you end must leave a report behind. If the turn ends with no `conductor report`
-since the last one, the watcher assumes something went wrong and wakes the conductor.
+Every prompt from the user or the conductor needs a report before you end the turn. If the
+turn ends with no `conductor report` since that prompt, the watcher assumes something went
+wrong and wakes the conductor. Turns started by a background shell or subagent finishing
+(`<task-notification>`) don't need a new report, so before you end a turn that leaves
+background work running, say so: `conductor report working "waiting on <job>"`.
 
 - If you can't go on without help (a missing credential, a failing tool, a brief that
   contradicts the code), run `conductor report blocked "<reason>"`.
