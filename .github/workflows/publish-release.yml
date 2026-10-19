@@ -26,8 +26,11 @@ jobs:
           persist-credentials: false
       # Installs the toolchain and components pinned in rust-toolchain.toml.
       - run: rustup show
+      # Pinned: 0.3.172+ (pest 2.9.3+) fails on GitHub runners with "stack limit reached" while
+      # parsing the changelog template. Keep in step with release.yml.
       - uses: release-plz/action@v0.5
         with:
           command: release
+          version: 0.3.171
         env:
           GITHUB_TOKEN: ${{ github.token }}

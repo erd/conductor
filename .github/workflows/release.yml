@@ -49,9 +49,11 @@ jobs:
 
       # Installs the toolchain and components pinned in rust-toolchain.toml.
       - run: rustup show
+      # Pinned: 0.3.172+ (pest 2.9.3+) fails on GitHub runners with "stack limit reached" while
+      # parsing the changelog template. Keep in step with publish-release.yml.
       - uses: taiki-e/install-action@v2
         with:
-          tool: release-plz
+          tool: release-plz@0.3.171
 
       - name: Update version and changelog
         id: update
