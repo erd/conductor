@@ -149,7 +149,8 @@ struct Cursors {
 struct TaskCursor {
     /// Byte offset just past the last event read.
     offset: u64,
-    /// Whether the worker has reported a `status` since its last `turn_end`.
+    /// Whether the worker has reported a `status` since the last prompt from the user or the
+    /// conductor, or already woke the conductor for not doing so.
     #[serde(default)]
     reported: bool,
     /// The latest tool the worker started, for naming what a permission prompt is for.
@@ -183,10 +184,18 @@ impl TaskCursor {
     /// Takes in one event, returning why it should wake the conductor, if it should.
     fn apply(&mut self, event: &Event) -> Option<String> {
         match &event.payload {
-            // The deck and the conductor answer before they prompt the worker, so a prompt while
-            // a decision is open is most likely the user, answering it in the pane. Once is
-            // enough: a back-and-forth in the pane shouldn't wake the conductor on every line.
-            EventPayload::Prompt { .. } if !self.open_decisions.is_empty() && !self.prompted => {
+            // A background job finishing starts a turn, but neither the user nor the conductor
+            // asked anything.
+            EventPayload::Prompt { text } if is_harness_prompt(text) => None,
+            EventPayload::Prompt { .. } => {
+                self.reported = false;
+                if self.open_decisions.is_empty() || self.prompted {
+                    return None;
+                }
+                // The deck and the conductor answer before they prompt the worker, so a prompt
+                // while a decision is open is most likely the user, answering it in the pane.
+                // Once is enough: a back-and-forth in the pane shouldn't wake the conductor on
+                // every line.
                 self.prompted = true;
                 let keys: Vec<_> = self
                     .open_decisions
@@ -225,14 +234,16 @@ impl TaskCursor {
                 }
                 None
             }
-            EventPayload::TurnEnd { error } => {
-                let reported = std::mem::take(&mut self.reported);
-                match error {
-                    Some(error) => Some(format!("turn ended with an error ({error})")),
-                    None if !reported => Some("went idle without reporting".to_owned()),
-                    None => None,
+            EventPayload::TurnEnd { error } => match error {
+                Some(error) => Some(format!("turn ended with an error ({error})")),
+                // A worker with an open decision is waiting on the user. Once woken, the
+                // conductor needn't be again until the next prompt.
+                None if !self.reported && self.open_decisions.is_empty() => {
+                    self.reported = true;
+                    Some("went idle without reporting".to_owned())
                 }
-            }
+                None => None,
+            },
             EventPayload::Attention {
                 notification_type,
                 message,
@@ -412,6 +423,15 @@ fn is_live(task_dir: &Path) -> bool {
     })
 }
 
+/// First lines of the prompts the harness injects, e.g. when a background shell or subagent
+/// finishes, as opposed to prompts from the user or the conductor.
+const HARNESS_PROMPTS: &[&str] = &["<task-notification>"];
+
+fn is_harness_prompt(text: &str) -> bool {
+    let text = text.trim_start();
+    HARNESS_PROMPTS.iter().any(|tag| text.starts_with(tag))
+}
+
 fn parse_duration(s: &str) -> Result<Duration, String> {
     let duration: SignedDuration = s.parse().map_err(|e: jiff::Error| e.to_string())?;
     Duration::try_from(duration).map_err(|_| "must not be negative".to_owned())
@@ -456,13 +476,19 @@ mod tests {
     }
 
     #[test]
-    fn turn_end_wakes_only_without_a_status_since_the_last_one() {
+    fn turn_end_wakes_only_without_a_status_since_the_last_prompt() {
         let mut cursor = TaskCursor::default();
+        let prompt = r#"{"kind":"prompt","text":"go"}"#;
         let wakes = apply_all(
             &mut cursor,
             &[
+                prompt,
                 r#"{"kind":"turn_end"}"#,
+                prompt,
                 r#"{"kind":"status","verb":"working"}"#,
+                r#"{"kind":"turn_end"}"#,
+                r#"{"kind":"turn_end"}"#,
+                prompt,
                 r#"{"kind":"turn_end"}"#,
                 r#"{"kind":"turn_end"}"#,
                 r#"{"kind":"status","verb":"done"}"#,
@@ -472,12 +498,102 @@ mod tests {
         assert_eq!(
             wakes,
             [
+                None,
                 Some("went idle without reporting".to_owned()),
                 None,
                 None,
+                None,
+                None,
+                None,
                 Some("went idle without reporting".to_owned()),
+                // Already woken for that prompt.
+                None,
                 None,
                 Some("turn ended with an error (rate_limit)".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn harness_notifications_ask_for_no_report() {
+        let mut cursor = TaskCursor::default();
+        let notification = r#"{"kind":"prompt","text":"<task-notification>"}"#;
+        let wakes = apply_all(
+            &mut cursor,
+            &[
+                r#"{"kind":"prompt","text":"go"}"#,
+                r#"{"kind":"status","verb":"working","text":"plan.sh running"}"#,
+                r#"{"kind":"turn_end"}"#,
+                notification,
+                r#"{"kind":"turn_end"}"#,
+                notification,
+                r#"{"kind":"turn_end"}"#,
+                r#"{"kind":"prompt","text":"how's it going?"}"#,
+                r#"{"kind":"turn_end"}"#,
+            ],
+        );
+        assert_eq!(
+            wakes,
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("went idle without reporting".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn open_decision_suppresses_idle_wake() {
+        let mut cursor = TaskCursor::default();
+        let wakes = apply_all(
+            &mut cursor,
+            &[
+                r#"{"kind":"decision_open","key":"approve-plan"}"#,
+                r#"{"kind":"turn_end"}"#,
+                r#"{"kind":"prompt","text":"what does step 3 do?"}"#,
+                r#"{"kind":"turn_end"}"#,
+                r#"{"kind":"decision_answered","key":"approve-plan"}"#,
+                r#"{"kind":"prompt","text":"approve-plan: approved"}"#,
+                r#"{"kind":"turn_end"}"#,
+            ],
+        );
+        assert_eq!(
+            wakes,
+            [
+                Some("opened decision `approve-plan`".to_owned()),
+                None,
+                Some("got a prompt while decision `approve-plan` is open".to_owned()),
+                None,
+                None,
+                None,
+                Some("went idle without reporting".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn harness_notification_while_a_decision_is_open_does_not_wake() {
+        let mut cursor = TaskCursor::default();
+        let wakes = apply_all(
+            &mut cursor,
+            &[
+                r#"{"kind":"decision_open","key":"db"}"#,
+                r#"{"kind":"prompt","text":"<task-notification>"}"#,
+                r#"{"kind":"prompt","text":"db: pg"}"#,
+            ],
+        );
+        assert_eq!(
+            wakes,
+            [
+                Some("opened decision `db`".to_owned()),
+                None,
+                Some("got a prompt while decision `db` is open".to_owned()),
             ]
         );
     }
