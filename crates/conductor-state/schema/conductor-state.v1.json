@@ -240,6 +240,13 @@
         {
           "description": "`PreToolUse` hook.",
           "properties": {
+            "command": {
+              "description": "Bash only, when `summary` cuts it: the whole command, for naming what a permission\nprompt is for.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "kind": {
               "const": "tool_start",
               "type": "string"

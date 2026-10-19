@@ -52,6 +52,7 @@ fn concurrent_appends_stay_whole() {
                     let ev = event(EventPayload::ToolStart {
                         tool_name: format!("t{t}"),
                         summary,
+                        command: None,
                         tool_use_id: Some(format!("{t}-{i}")),
                     });
                     append_event(dir, &ev).unwrap();

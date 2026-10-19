@@ -174,6 +174,9 @@ struct LastTool {
     name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     summary: Option<String>,
+    /// The whole Bash command, when `summary` cuts it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
 }
 
 impl TaskCursor {
@@ -201,11 +204,15 @@ impl TaskCursor {
                 ))
             }
             EventPayload::ToolStart {
-                tool_name, summary, ..
+                tool_name,
+                summary,
+                command,
+                ..
             } => {
                 self.last_tool = Some(LastTool {
                     name: tool_name.clone(),
                     summary: summary.clone(),
+                    command: command.clone(),
                 });
                 None
             }
@@ -230,15 +237,19 @@ impl TaskCursor {
                 notification_type,
                 message,
             } => match notification_type.as_str() {
+                // The whole command, so the conductor can tell what's waiting from the wake.
                 "permission_prompt" => Some(match &self.last_tool {
                     Some(LastTool {
                         name,
-                        summary: Some(summary),
-                    }) => format!("needs permission ({name}: {summary})"),
-                    Some(LastTool {
-                        name,
-                        summary: None,
-                    }) => format!("needs permission ({name})"),
+                        summary,
+                        command,
+                    }) => match command.as_ref().or(summary.as_ref()) {
+                        // One line per task, even for a multi-line command.
+                        Some(input) => {
+                            format!("needs permission ({name}: {})", input.replace('\n', "\\n"))
+                        }
+                        None => format!("needs permission ({name})"),
+                    },
                     None => "needs permission".to_owned(),
                 }),
                 // Follows every turn_end after a minute; the turn_end rule already covers an
@@ -498,6 +509,32 @@ mod tests {
     }
 
     #[test]
+    fn permission_prompt_shows_the_whole_command() {
+        let mut cursor = TaskCursor::default();
+        let wakes = apply_all(
+            &mut cursor,
+            &[
+                r#"{"kind":"tool_start","tool_name":"Bash","summary":"cd /src/x && uv run cli…","command":"cd /src/x && uv run cli merge 1 2 --stage prod --commit"}"#,
+                r#"{"kind":"attention","type":"permission_prompt","message":"Claude needs your permission"}"#,
+                r#"{"kind":"tool_start","tool_name":"Bash","summary":"psql <<'SQL'…","command":"psql <<'SQL'\nDELETE FROM t;\nSQL"}"#,
+                r#"{"kind":"attention","type":"permission_prompt","message":"Claude needs your permission"}"#,
+            ],
+        );
+        assert_eq!(
+            wakes,
+            [
+                None,
+                Some(
+                    "needs permission (Bash: cd /src/x && uv run cli merge 1 2 --stage prod --commit)"
+                        .to_owned()
+                ),
+                None,
+                Some(r"needs permission (Bash: psql <<'SQL'\nDELETE FROM t;\nSQL)".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn other_wake_conditions() {
         let mut cursor = TaskCursor::default();
         let wakes = apply_all(
@@ -639,6 +676,7 @@ mod tests {
                     last_tool: Some(LastTool {
                         name: "Bash".to_owned(),
                         summary: Some("rm -rf build".to_owned()),
+                        command: None,
                     }),
                     open_decisions: BTreeSet::from(["db".to_owned()]),
                     prompted: true,
@@ -662,6 +700,14 @@ mod tests {
         let cursor = &cursors.tasks["fix-login-07"];
         assert!(cursor.open_decisions.is_empty());
         assert!(!cursor.prompted);
+    }
+
+    #[test]
+    fn cursor_from_before_whole_commands_loads() {
+        let json = r#"{"tasks":{"fix-login-07":{"offset":10,"last_tool":{"name":"Bash","summary":"ls"}}}}"#;
+        let cursors: Cursors = serde_json::from_str(json).unwrap();
+        let last_tool = cursors.tasks["fix-login-07"].last_tool.as_ref().unwrap();
+        assert_eq!(last_tool.command, None);
     }
 
     #[test]

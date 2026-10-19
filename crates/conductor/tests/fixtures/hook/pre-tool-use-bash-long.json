@@ -19,6 +19,7 @@
     "kind": "tool_start",
     "tool_name": "Bash",
     "summary": "cargo test --locked -p conductor --test hook -- --nocapture fixtures_produce_ex…",
+    "command": "cargo test --locked -p conductor --test hook -- --nocapture fixtures_produce_expected_events 2>&1 | tail -50",
     "tool_use_id": "toolu_01ABC124"
   }
 }

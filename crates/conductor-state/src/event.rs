@@ -25,19 +25,20 @@ impl Event {
     /// Cuts each free-text field down to at most `max` bytes, ending a cut field with `…`.
     /// Identifiers and paths are left alone.
     pub(crate) fn truncate_text(&mut self, max: usize) {
-        let field = match &mut self.payload {
+        let fields = match &mut self.payload {
             EventPayload::Prompt { text } | EventPayload::Attention { message: text, .. } => {
-                Some(text)
+                [Some(text), None]
             }
-            EventPayload::SessionEnd { reason } => Some(reason),
-            EventPayload::ToolStart { summary, .. } | EventPayload::ToolEnd { summary, .. } => {
-                summary.as_mut()
-            }
-            EventPayload::TurnEnd { error } => error.as_mut(),
-            EventPayload::Status { text, .. } => text.as_mut(),
-            _ => None,
+            EventPayload::SessionEnd { reason } => [Some(reason), None],
+            EventPayload::ToolStart {
+                summary, command, ..
+            } => [summary.as_mut(), command.as_mut()],
+            EventPayload::ToolEnd { summary, .. } => [summary.as_mut(), None],
+            EventPayload::TurnEnd { error } => [error.as_mut(), None],
+            EventPayload::Status { text, .. } => [text.as_mut(), None],
+            _ => [None, None],
         };
-        if let Some(field) = field {
+        for field in fields.into_iter().flatten() {
             truncate(field, max);
         }
     }
@@ -87,6 +88,10 @@ pub enum EventPayload {
         /// Short summary of the input: a file path, a command's head, …
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
+        /// Bash only, when `summary` cuts it: the whole command, for naming what a permission
+        /// prompt is for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
         /// Pairs this event with its `tool_end`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_use_id: Option<String>,
@@ -270,6 +275,28 @@ mod tests {
         event.truncate_text(8);
         assert_eq!(text(&event), "abcde…");
         assert!(text(&event).len() <= 8);
+    }
+
+    #[test]
+    fn tool_start_cuts_summary_and_command() {
+        let mut event = Event {
+            payload: EventPayload::ToolStart {
+                tool_name: "Bash".into(),
+                summary: Some("abcdefghij".into()),
+                command: Some("abcdefghij --stage prod".into()),
+                tool_use_id: None,
+            },
+            ..prompt("")
+        };
+        event.truncate_text(8);
+        let EventPayload::ToolStart {
+            summary, command, ..
+        } = &event.payload
+        else {
+            unreachable!()
+        };
+        assert_eq!(summary.as_deref(), Some("abcde…"));
+        assert_eq!(command.as_deref(), Some("abcde…"));
     }
 
     #[test]

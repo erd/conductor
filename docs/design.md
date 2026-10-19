@@ -164,7 +164,7 @@ Every event carries `ts`, `task`, `kind`, and `session_id` (when known).
 |---|---|---|
 | `session_start` | SessionStart hook | `source`, `herdr_pane_id`, `herdr_workspace_id`, `transcript_path` |
 | `prompt` | UserPromptSubmit hook | first line of the prompt (truncated) |
-| `tool_start` / `tool_end` | PreToolUse / PostToolUse and PostToolUseFailure hooks | `tool_name`, a short summary (file path, command head), `tool_use_id?`, `ok` (end only) |
+| `tool_start` / `tool_end` | PreToolUse / PostToolUse and PostToolUseFailure hooks | `tool_name`, a short summary (file path, command head), `command?` (start only: the whole Bash command, when the summary cuts it), `tool_use_id?`, `ok` (end only) |
 | `attention` | Notification hook | `type` (`permission_prompt`, `idle_prompt`, …), message |
 | `turn_end` | Stop / StopFailure hooks | `error?` |
 | `session_end` | SessionEnd hook | `reason` |
@@ -361,7 +361,8 @@ forgets to report, so there is a backstop:
   `attention`, `turn_end` without a matching `status` report, `session_end`,
   `decision_open`, or the first `prompt` while a decision is open (the user
   may have answered it in the worker's pane). It writes a short wake summary to stderr, one line per
-  task, e.g. `fix-login-07: needs permission (Bash: rm -rf build)`. An
+  task, e.g. `fix-login-07: needs permission (Bash: rm -rf build)`. A
+  permission wake shows the latest tool's whole command, with newlines as `\n`. An
   `idle_prompt` attention doesn't wake it: Claude sends one a minute after
   every turn ends, and the `turn_end` rule already covers that. A turn that
   ends on an API error always wakes it.

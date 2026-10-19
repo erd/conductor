@@ -1,0 +1,25 @@
+{
+  "event": "pre-tool-use",
+  "input": {
+    "session_id": "abc123",
+    "transcript_path": "/Users/me/.claude/projects/-src-my-repo/00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
+    "cwd": "/src/my-repo/.worktrees/fix-login-07",
+    "permission_mode": "auto",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cd /src/my-repo/.worktrees/fix-login-07 && uv run cli meeting merge 15488 15417 --allow-discard --allow-cross-location --stage prod --commit",
+      "description": "Merge the meetings"
+    },
+    "tool_use_id": "toolu_01ABC125"
+  },
+  "expected": {
+    "task": "fix-login-07",
+    "session_id": "abc123",
+    "kind": "tool_start",
+    "tool_name": "Bash",
+    "summary": "cd /src/my-repo/.worktrees/fix-login-07 && uv run cli meeting merge 15488 15417…",
+    "command": "cd /src/my-repo/.worktrees/fix-login-07 && uv run cli meeting merge 15488 15417 --allow-discard --allow-cross-location --stage prod --commit",
+    "tool_use_id": "toolu_01ABC125"
+  }
+}

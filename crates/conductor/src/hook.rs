@@ -70,13 +70,25 @@ fn record(event: &str, task: Option<&str>, role: Option<&str>) -> anyhow::Result
     if let Some(task) = task {
         let input: HookInput = serde_json::from_str(&stdin).context("malformed hook input")?;
         let task_dir = Home::resolve()?.task_dir(&repo_id()?, task);
-        let event = Event {
+        let mut event = Event {
             ts: Timestamp::now(),
             task: task.to_owned(),
             session_id: input.session_id.clone(),
             payload: payload(event, &input, env_var)?,
         };
-        append_event(&task_dir, &event)?;
+        let appended = append_event(&task_dir, &event);
+        // Escaping can push a long command over the line cap; the event matters more.
+        if let Err(conductor_state::Error::EventTooLarge { .. }) = appended
+            && let EventPayload::ToolStart {
+                command: command @ Some(_),
+                ..
+            } = &mut event.payload
+        {
+            *command = None;
+            append_event(&task_dir, &event)?;
+        } else {
+            appended?;
+        }
     } else if role == Some("conductor") && event == HookEvent::SessionStart {
         let recorded = record_conductor_pane();
         // The deck doesn't need repo.json, so open it even if recording failed.
@@ -198,8 +210,16 @@ fn payload(
         }
         HookEvent::PreToolUse => {
             let tool_name = required(&input.tool_name, "tool_name")?;
+            let summary = tool_summary(&tool_name, &input.tool_input);
+            // The whole command, when the summary cut it.
+            let command = (tool_name == "Bash")
+                .then(|| input.tool_input.get("command")?.as_str())
+                .flatten()
+                .filter(|command| summary.as_deref() != Some(*command))
+                .map(str::to_owned);
             EventPayload::ToolStart {
-                summary: tool_summary(&tool_name, &input.tool_input),
+                summary,
+                command,
                 tool_name,
                 tool_use_id: input.tool_use_id.clone(),
             }
