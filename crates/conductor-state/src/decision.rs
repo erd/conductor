@@ -49,7 +49,7 @@ pub struct Answer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AnsweredBy {
-    /// The human, by telling the conductor.
+    /// The human, by telling the conductor, or in the worker's pane, which the worker records.
     User,
     /// The human, through the deck.
     Deck,

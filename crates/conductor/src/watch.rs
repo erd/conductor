@@ -1,11 +1,12 @@
 //! `conductor watch`: the conductor's backstop wake. Follows the `events.jsonl` of every live
 //! task in a repo and exits 2, which wakes the conductor through its `asyncRewake` Stop hook,
-//! when a worker needs it, or when a task's PR is merged, closed, starts failing checks or gets
-//! changes requested.
+//! when a worker needs it, when a worker gets a prompt while one of its decisions is open (the
+//! user may have answered it in the pane), or when a task's PR is merged, closed, starts failing
+//! checks or gets changes requested.
 
 mod pr;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions, TryLockError};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -154,6 +155,12 @@ struct TaskCursor {
     /// The latest tool the worker started, for naming what a permission prompt is for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_tool: Option<LastTool>,
+    /// Keys of the task's decisions opened and not yet answered.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    open_decisions: BTreeSet<String>,
+    /// Whether a prompt has already woken the conductor since the open decisions were opened.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    prompted: bool,
     /// The latest `pr_url` the worker reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pr_url: Option<String>,
@@ -173,6 +180,26 @@ impl TaskCursor {
     /// Takes in one event, returning why it should wake the conductor, if it should.
     fn apply(&mut self, event: &Event) -> Option<String> {
         match &event.payload {
+            // The deck and the conductor answer before they prompt the worker, so a prompt while
+            // a decision is open is most likely the user, answering it in the pane. Once is
+            // enough: a back-and-forth in the pane shouldn't wake the conductor on every line.
+            EventPayload::Prompt { .. } if !self.open_decisions.is_empty() && !self.prompted => {
+                self.prompted = true;
+                let keys: Vec<_> = self
+                    .open_decisions
+                    .iter()
+                    .map(|k| format!("`{k}`"))
+                    .collect();
+                let (noun, verb) = if keys.len() == 1 {
+                    ("decision", "is")
+                } else {
+                    ("decisions", "are")
+                };
+                Some(format!(
+                    "got a prompt while {noun} {} {verb} open",
+                    keys.join(", ")
+                ))
+            }
             EventPayload::ToolStart {
                 tool_name, summary, ..
             } => {
@@ -219,7 +246,18 @@ impl TaskCursor {
                 "idle_prompt" => None,
                 _ => Some(format!("needs attention ({message})")),
             },
-            EventPayload::DecisionOpen { key } => Some(format!("opened decision `{key}`")),
+            EventPayload::DecisionOpen { key } => {
+                self.open_decisions.insert(key.clone());
+                self.prompted = false;
+                Some(format!("opened decision `{key}`"))
+            }
+            EventPayload::DecisionAnswered { key } => {
+                self.open_decisions.remove(key);
+                if self.open_decisions.is_empty() {
+                    self.prompted = false;
+                }
+                None
+            }
             EventPayload::SessionEnd { reason } => Some(format!("session ended ({reason})")),
             EventPayload::Pr {
                 state,
@@ -483,6 +521,44 @@ mod tests {
     }
 
     #[test]
+    fn prompt_while_a_decision_is_open_wakes_once() {
+        let mut cursor = TaskCursor::default();
+        let prompt = r#"{"kind":"prompt","text":"Plan is approved"}"#;
+        let wakes = apply_all(
+            &mut cursor,
+            &[
+                prompt,
+                r#"{"kind":"decision_open","key":"approve-plan"}"#,
+                prompt,
+                prompt,
+                r#"{"kind":"decision_answered","key":"approve-plan"}"#,
+                prompt,
+                r#"{"kind":"decision_open","key":"db"}"#,
+                r#"{"kind":"decision_open","key":"tone"}"#,
+                prompt,
+                r#"{"kind":"decision_answered","key":"db"}"#,
+                prompt,
+            ],
+        );
+        assert_eq!(
+            wakes,
+            [
+                None,
+                Some("opened decision `approve-plan`".to_owned()),
+                Some("got a prompt while decision `approve-plan` is open".to_owned()),
+                None,
+                None,
+                None,
+                Some("opened decision `db`".to_owned()),
+                Some("opened decision `tone`".to_owned()),
+                Some("got a prompt while decisions `db`, `tone` are open".to_owned()),
+                None,
+                None,
+            ]
+        );
+    }
+
+    #[test]
     fn pr_events_wake_on_transitions() {
         let mut cursor = TaskCursor::default();
         let wakes = apply_all(
@@ -564,6 +640,8 @@ mod tests {
                         name: "Bash".to_owned(),
                         summary: Some("rm -rf build".to_owned()),
                     }),
+                    open_decisions: BTreeSet::from(["db".to_owned()]),
+                    prompted: true,
                     pr_url: Some("https://github.com/erd/web/pull/42".to_owned()),
                     pr: Some(PrSnapshot {
                         state: PrState::Open,
@@ -575,6 +653,15 @@ mod tests {
         };
         let json = serde_json::to_string(&cursors).unwrap();
         assert_eq!(serde_json::from_str::<Cursors>(&json).unwrap(), cursors);
+    }
+
+    #[test]
+    fn cursor_from_before_decision_tracking_loads() {
+        let json = r#"{"tasks":{"fix-login-07":{"offset":10,"reported":false}}}"#;
+        let cursors: Cursors = serde_json::from_str(json).unwrap();
+        let cursor = &cursors.tasks["fix-login-07"];
+        assert!(cursor.open_decisions.is_empty());
+        assert!(!cursor.prompted);
     }
 
     #[test]

@@ -33,7 +33,7 @@
       "oneOf": [
         {
           "const": "user",
-          "description": "The human, by telling the conductor.",
+          "description": "The human, by telling the conductor, or in the worker's pane, which the worker records.",
           "type": "string"
         },
         {

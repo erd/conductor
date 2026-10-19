@@ -85,6 +85,26 @@ conductor decision list --json
 
 Then continue, starting with `conductor report working "<what you're doing now>"`.
 
+### If the user answers in your pane
+
+Sometimes the user answers an open decision by typing in your pane instead of through the
+conductor. Nothing records that answer for you, so the task would stay stuck waiting on it.
+Record it yourself before you continue:
+
+1. Match their words to one of the decision's option values. Use free text only if the
+   decision allows it. If you can't tell which option they meant, don't guess: `SendMessage`
+   the conductor what they said and end the turn.
+2. Record it as the user's answer, with their words as the note:
+
+   ```sh
+   conductor decision answer email-normalize domain --by user --note "<their words>"
+   ```
+
+   Answering the last open decision moves the task back to `working`.
+3. `conductor report working "<what you're doing now>"`.
+4. `SendMessage` the conductor, e.g.
+   `fix-login-07: user answered email-normalize in pane: domain`.
+
 ## 4. Finishing a ship task
 
 1. Check the work against the brief's acceptance criteria, and run the project's own checks
@@ -173,5 +193,7 @@ in the PR body, `report.md` or the decision file, not in the message.
 - Never edit files outside the worktree, except a scout's `report.md`.
 - Never message the user directly or wait for their reply. Questions go through
   `conductor decision open` and the conductor.
-- Never change the task's state yourself: no `conductor task …`, `conductor spawn`,
-  `conductor resume` or `conductor decision answer`.
+- Never change the task's state yourself: no `conductor task …`, `conductor spawn` or
+  `conductor resume`. Never answer a decision yourself. The only `conductor decision answer`
+  you may run records an answer the user gave in your pane, with `--by user` (see
+  [3. Questions](#3-questions)).
