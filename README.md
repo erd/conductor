@@ -86,3 +86,7 @@ claude --plugin-dir .
 
 CI checks the plugin and marketplace manifests with `claude plugin validate .`. It warns that
 `plugin.json` has no `version`; that's intended, so installs follow the latest commit.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
