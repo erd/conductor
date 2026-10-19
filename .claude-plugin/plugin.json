@@ -5,5 +5,6 @@
     "name": "Erich Douglass"
   },
   "homepage": "https://github.com/erd/conductor",
-  "repository": "https://github.com/erd/conductor"
+  "repository": "https://github.com/erd/conductor",
+  "license": "Apache-2.0"
 }
