@@ -32,6 +32,8 @@ pub struct Settings {
     pub branch_prefix: String,
     /// Width of the deck, in columns.
     pub deck_width: u16,
+    /// Glyphs the deck draws with: `unicode`, or `nerd` for a Nerd Font terminal.
+    pub deck_icons: DeckIcons,
     /// How often `conductor watch` polls an open PR, e.g. `"2m"`.
     #[serde(serialize_with = "jiff::fmt::serde::duration::friendly::compact::required")]
     #[schemars(with = "String")]
@@ -45,9 +47,21 @@ impl Default for Settings {
             effort: None,
             branch_prefix: "conductor/".to_owned(),
             deck_width: 48,
+            deck_icons: DeckIcons::Unicode,
             pr_poll_interval: SignedDuration::from_mins(2),
         }
     }
+}
+
+/// The glyphs the deck draws with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeckIcons {
+    /// Box drawing and a few symbols, which any monospace font has.
+    #[default]
+    Unicode,
+    /// Nerd Font icons, powerline pills and segments; needs a Nerd Font v3 terminal font.
+    Nerd,
 }
 
 /// Per-repo overrides; each set field replaces the global default.
@@ -62,6 +76,8 @@ pub struct RepoOverrides {
     pub branch_prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deck_width: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deck_icons: Option<DeckIcons>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "jiff::fmt::serde::duration::friendly::compact::optional"
@@ -103,6 +119,7 @@ impl Config {
                 .clone()
                 .unwrap_or_else(|| defaults.branch_prefix.clone()),
             deck_width: repo.deck_width.unwrap_or(defaults.deck_width),
+            deck_icons: repo.deck_icons.unwrap_or(defaults.deck_icons),
             pr_poll_interval: repo.pr_poll_interval.unwrap_or(defaults.pr_poll_interval),
         }
     }
