@@ -56,7 +56,7 @@ mod schema;
 mod store;
 mod task;
 
-pub use config::{Config, RepoOverrides, Settings};
+pub use config::{Config, DeckIcons, RepoOverrides, Settings};
 pub use decision::{Answer, AnsweredBy, Decision, DecisionOption};
 pub use error::{Error, Result};
 pub use event::{CheckState, Event, EventPayload, PrState, ReviewDecision, StatusVerb};

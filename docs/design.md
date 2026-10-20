@@ -456,6 +456,9 @@ which is moved to `hook.log.1` once it reaches 1 MiB.
 - **Width:** after opening, the deck sets its width with
   `layout.set_split_ratio`, and recomputes the ratio from the terminal width on
   `layout.updated` to stay close to the configured `deck_width` in columns.
+- **Icons:** `deck_icons` picks the glyphs: `unicode` (the default) for any
+  monospace font, or `nerd` for Nerd Font icons with powerline pills and section
+  segments, which needs a Nerd Font v3 terminal font.
 - **Opening:** the conductor's SessionStart hook runs `herdr plugin pane open
   --plugin conductor-deck --entrypoint deck --placement split --direction right
   --target-pane $HERDR_PANE_ID`, unless the deck plugin isn't installed and

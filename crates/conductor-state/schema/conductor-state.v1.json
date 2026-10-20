@@ -65,6 +65,11 @@
           "description": "Prefix for task branches.",
           "type": "string"
         },
+        "deck_icons": {
+          "$ref": "#/$defs/DeckIcons",
+          "default": "unicode",
+          "description": "Glyphs the deck draws with: `unicode`, or `nerd` for a Nerd Font terminal."
+        },
         "deck_width": {
           "default": 48,
           "description": "Width of the deck, in columns.",
@@ -179,6 +184,21 @@
         "label"
       ],
       "type": "object"
+    },
+    "DeckIcons": {
+      "description": "The glyphs the deck draws with.",
+      "oneOf": [
+        {
+          "const": "unicode",
+          "description": "Box drawing and a few symbols, which any monospace font has.",
+          "type": "string"
+        },
+        {
+          "const": "nerd",
+          "description": "Nerd Font icons, powerline pills and segments; needs a Nerd Font v3 terminal font.",
+          "type": "string"
+        }
+      ]
     },
     "Event": {
       "description": "One line of `events.jsonl`. The common fields sit next to the payload's fields, and the\npayload's `kind` says which payload it is.",
@@ -588,6 +608,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "deck_icons": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeckIcons"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "deck_width": {

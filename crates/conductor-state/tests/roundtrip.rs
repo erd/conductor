@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use std::fmt::Debug;
 
 use conductor_state::{
-    Answer, AnsweredBy, CheckState, Config, Decision, DecisionOption, Error, Event, EventPayload,
-    Phase, PrState, RepoOverrides, RepoRecord, ReviewDecision, SchemaV1, Settings, StatusVerb,
-    Task, TaskKind,
+    Answer, AnsweredBy, CheckState, Config, Decision, DecisionOption, DeckIcons, Error, Event,
+    EventPayload, Phase, PrState, RepoOverrides, RepoRecord, ReviewDecision, SchemaV1, Settings,
+    StatusVerb, Task, TaskKind,
 };
 use jiff::{SignedDuration, Timestamp};
 use serde::Serialize;
@@ -592,6 +592,7 @@ fn config_defaults() {
             effort: None,
             branch_prefix: "conductor/".into(),
             deck_width: 48,
+            deck_icons: DeckIcons::Unicode,
             pr_poll_interval: SignedDuration::from_mins(2),
         }
     );
@@ -603,12 +604,14 @@ model = "opus"
 effort = "high"
 branch_prefix = "erd/"
 deck_width = 60
+deck_icons = "nerd"
 pr_poll_interval = "45s"
 unknown_key = true
 
 [repos."hamlet-web-v2-3f9a1c"]
 model = "sonnet"
 deck_width = 72
+deck_icons = "unicode"
 pr_poll_interval = "5m"
 
 [repos."quiet-000000"]
@@ -621,6 +624,7 @@ fn full_config() -> Config {
             effort: Some("high".into()),
             branch_prefix: "erd/".into(),
             deck_width: 60,
+            deck_icons: DeckIcons::Nerd,
             pr_poll_interval: SignedDuration::from_secs(45),
         },
         repos: [
@@ -629,6 +633,7 @@ fn full_config() -> Config {
                 RepoOverrides {
                     model: Some("sonnet".into()),
                     deck_width: Some(72),
+                    deck_icons: Some(DeckIcons::Unicode),
                     pr_poll_interval: Some(SignedDuration::from_mins(5)),
                     ..RepoOverrides::default()
                 },
@@ -661,6 +666,7 @@ fn config_resolve() {
             effort: Some("high".into()),
             branch_prefix: "erd/".into(),
             deck_width: 72,
+            deck_icons: DeckIcons::Unicode,
             pr_poll_interval: SignedDuration::from_mins(5),
         }
     );
