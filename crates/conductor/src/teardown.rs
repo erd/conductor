@@ -289,11 +289,36 @@ impl Steps<'_> {
     }
 
     /// Removes the worktree with `wt remove`, which deletes the branch if it sees it merged.
-    /// If it doesn't and `force_delete`, removes the branch again with `-D`.
+    /// If it doesn't and `force_delete`, removes the branch again with `-D`. If the branch is
+    /// already gone (e.g. deleted on merge and pruned), removes the worktree by its path, or
+    /// skips it if that's gone too.
     fn remove_worktree(&mut self, task: &mut Task, force_delete: bool) -> anyhow::Result<()> {
         let (Some(branch), Some(path)) = (task.branch.clone(), task.worktree_path.clone()) else {
             return Ok(());
         };
+        if !self.branch_exists(&branch)? {
+            if self.worktree_listed(&path)? {
+                let cmd = self.wt().arg("remove").arg(path.to_string_lossy()).args([
+                    "--foreground",
+                    "--no-delete-branch",
+                    "--format=json",
+                ]);
+                check_wt("wt remove", self.runner.run(&cmd)?, self.root)?;
+                writeln!(
+                    self.out,
+                    "removed worktree {}; branch {branch} was already deleted",
+                    path.display()
+                )?;
+            } else {
+                writeln!(
+                    self.out,
+                    "worktree {} and branch {branch} were already removed",
+                    path.display()
+                )?;
+            }
+            task.worktree_path = None;
+            return save(self.task_dir, task);
+        }
         let mut outcome = self.wt_remove(&branch, false)?;
         if outcome == RETAINED_UNMERGED && force_delete {
             outcome = self.wt_remove(&branch, true)?;
@@ -334,6 +359,29 @@ impl Steps<'_> {
             .find(|r| r.branch == branch)
             .map(|r| r.branch_outcome)
             .ok_or_else(|| anyhow!("`wt remove` printed no entry for branch {branch}"))
+    }
+
+    /// Whether the local branch `branch` exists.
+    fn branch_exists(&self, branch: &str) -> anyhow::Result<bool> {
+        let refname = format!("refs/heads/{branch}");
+        let cmd = self.git(&["show-ref", "--verify", "--quiet", &refname]);
+        let output = self.runner.run(&cmd)?;
+        match output.code {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(failure("git show-ref", &output)),
+        }
+    }
+
+    /// Whether git still lists a worktree at `path`.
+    fn worktree_listed(&self, path: &Path) -> anyhow::Result<bool> {
+        let cmd = self.git(&["worktree", "list", "--porcelain"]);
+        let output = check("git worktree list", self.runner.run(&cmd)?)?;
+        Ok(output
+            .stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .any(|listed| Path::new(listed) == path))
     }
 
     /// Closes the task's herdr workspace, which may already be gone.
@@ -589,7 +637,22 @@ mod tests {
             .ok(&["herdr", "pane", "close", "w9:p1"], "")
     }
 
+    /// The branch still exists.
+    fn branch_there(fake: Fake) -> Fake {
+        fake.ok(&["git", "-C", ROOT, "show-ref"], "")
+    }
+
+    /// The branch was already deleted.
+    fn branch_gone(fake: Fake) -> Fake {
+        fake.fail(&["git", "-C", ROOT, "show-ref"], 1, "")
+    }
+
     fn remove(fake: Fake, outcome: &str) -> Fake {
+        remove_again(branch_there(fake), outcome)
+    }
+
+    /// `wt remove` again in the same run, as the `-D` retry.
+    fn remove_again(fake: Fake, outcome: &str) -> Fake {
         fake.ok(&["wt", "-C", ROOT, "remove", BRANCH], &wt_json(outcome))
     }
 
@@ -682,6 +745,18 @@ mod tests {
         assert_eq!(
             argvs[8],
             [
+                "git",
+                "-C",
+                ROOT,
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{BRANCH}")
+            ]
+        );
+        assert_eq!(
+            argvs[9],
+            [
                 "wt",
                 "-C",
                 ROOT,
@@ -756,13 +831,13 @@ mod tests {
     fn worktrunk_keeping_a_merged_branch_falls_back_to_force_delete() {
         let fx = Fixture::new(TaskKind::Ship, Phase::Merged);
         let fake = remove(stop(pull(merged(Fake::default()))), RETAINED_UNMERGED);
-        let fake = close(remove(fake, "deleted"));
+        let fake = close(remove_again(fake, "deleted"));
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
         let argvs = fake.argvs();
-        assert_eq!(argvs[9].last().map(String::as_str), Some("-D"));
-        assert_eq!(argvs[8].last().map(String::as_str), Some("--format=json"));
+        assert_eq!(argvs[10].last().map(String::as_str), Some("-D"));
+        assert_eq!(argvs[9].last().map(String::as_str), Some("--format=json"));
         assert_torn_down(&fx);
     }
 
@@ -863,11 +938,11 @@ mod tests {
         let fx = Fixture::new(TaskKind::Ship, Phase::Abandoned);
         let fake = pr_view(Fake::default(), "CLOSED");
         let fake = remove(stop(pull(fake)), RETAINED_UNMERGED);
-        let fake = close(remove(fake, "deleted"));
+        let fake = close(remove_again(fake, "deleted"));
         let run = fx.teardown(&fake, &["--abandon", "--force-delete-branch"]);
         run.result.unwrap();
         assert!(fake.done());
-        assert_eq!(fake.argvs()[9].last().map(String::as_str), Some("-D"));
+        assert_eq!(fake.argvs()[10].last().map(String::as_str), Some("-D"));
         assert_eq!(run.err, "");
         assert_eq!(fx.task().phase, Phase::Abandoned);
         assert_eq!(fx.phases(), [], "already abandoned");
@@ -987,11 +1062,108 @@ mod tests {
         );
 
         let fx = Fixture::new(TaskKind::Scout, Phase::Review);
-        let fake = stop(pull(Fake::default())).ok(&["wt", "-C", ROOT, "remove", BRANCH], "[]\n");
+        let fake = branch_there(stop(pull(Fake::default())))
+            .ok(&["wt", "-C", ROOT, "remove", BRANCH], "[]\n");
         let err = format!("{:#}", fx.teardown(&fake, &[]).result.unwrap_err());
         assert!(
             err.ends_with("`wt remove` printed no entry for branch conductor/fix-login-07"),
             "{err}"
+        );
+    }
+
+    /// `git worktree list --porcelain` output: the main checkout, plus the task's worktree on a
+    /// detached HEAD if `with_task`.
+    fn worktrees(fake: Fake, with_task: bool) -> Fake {
+        let main = format!("worktree {ROOT}\nHEAD 1a2b3c\nbranch refs/heads/main\n\n");
+        let task = format!("worktree {WORKTREE}\nHEAD 1a2b3c\ndetached\n\n");
+        let listing = if with_task { main + &task } else { main };
+        fake.ok(
+            &["git", "-C", ROOT, "worktree", "list", "--porcelain"],
+            &listing,
+        )
+    }
+
+    #[test]
+    fn deleted_branch_removes_worktree_by_path() {
+        let fx = Fixture::new(TaskKind::Ship, Phase::Merged);
+        let fake = worktrees(branch_gone(stop(pull(merged(Fake::default())))), true);
+        let removed = r#"[{"branch":null,"branch_outcome":"not_attempted","kind":"worktree"}]"#;
+        let fake = close(fake.ok(&["wt", "-C", ROOT, "remove", WORKTREE], removed));
+        let run = fx.teardown(&fake, &[]);
+        run.result.unwrap();
+        assert!(fake.done());
+        assert_eq!(
+            fake.argvs()[10],
+            [
+                "wt",
+                "-C",
+                ROOT,
+                "remove",
+                WORKTREE,
+                "--foreground",
+                "--no-delete-branch",
+                "--format=json"
+            ]
+        );
+        assert!(
+            run.out.contains(&format!(
+                "removed worktree {WORKTREE}; branch {BRANCH} was already deleted\n"
+            )),
+            "{}",
+            run.out
+        );
+        assert_eq!(run.err, "");
+        assert_torn_down(&fx);
+    }
+
+    #[test]
+    fn deleted_branch_and_worktree_skips_removal() {
+        for (extra, phase) in [
+            (&[][..], Phase::TornDown),
+            (&["--abandon"][..], Phase::Abandoned),
+        ] {
+            let fx = Fixture::new(TaskKind::Ship, Phase::Merged);
+            let fake = worktrees(branch_gone(stop(pull(merged(Fake::default())))), false);
+            let fake = close(fake);
+            let run = fx.teardown(&fake, extra);
+            run.result.unwrap();
+            assert!(fake.done(), "{extra:?}");
+            assert!(
+                fake.argvs()
+                    .iter()
+                    .all(|argv| argv[0] != "wt" || argv[3] != "remove")
+            );
+            assert!(
+                run.out.contains(&format!(
+                    "worktree {WORKTREE} and branch {BRANCH} were already removed\n"
+                )),
+                "{}",
+                run.out
+            );
+            let task = fx.task();
+            assert_eq!(task.phase, phase, "{extra:?}");
+            assert_eq!(task.worktree_path, None);
+            assert_eq!(task.herdr_workspace_id, None);
+        }
+    }
+
+    #[test]
+    fn failing_branch_check_stops_teardown() {
+        let fx = Fixture::new(TaskKind::Scout, Phase::Review);
+        let fake = stop(pull(Fake::default())).fail(
+            &["git", "-C", ROOT, "show-ref"],
+            128,
+            "fatal: not a git repository",
+        );
+        let err = format!("{:#}", fx.teardown(&fake, &[]).result.unwrap_err());
+        assert!(
+            err.ends_with("`git show-ref` failed (exit 128): fatal: not a git repository"),
+            "{err}"
+        );
+        assert!(fake.done());
+        assert_eq!(
+            fx.task().worktree_path.as_deref(),
+            Some(Path::new(WORKTREE))
         );
     }
 
@@ -1030,7 +1202,7 @@ mod tests {
             ),
             (
                 "remove",
-                |f| fail(stop(pull(f)), &["wt", "-C", ROOT, "remove"]),
+                |f| fail(branch_there(stop(pull(f))), &["wt", "-C", ROOT, "remove"]),
                 |f| close(remove(pull(f), "deleted")),
             ),
             (
@@ -1043,7 +1215,7 @@ mod tests {
                 },
                 |f| {
                     close(remove_branch_only(
-                        remove_branch_only(pull(f), RETAINED_UNMERGED),
+                        remove_branch_only(branch_there(pull(f)), RETAINED_UNMERGED),
                         "deleted",
                     ))
                 },
