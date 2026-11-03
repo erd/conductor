@@ -49,7 +49,8 @@ pub struct OpenArgs {
     /// The question, in one line.
     #[arg(long)]
     title: String,
-    /// Context for whoever answers.
+    /// Context for whoever answers: a sentence or two, then a `- ` line for each thing that
+    /// changes.
     #[arg(long, value_name = "TEXT")]
     about: Option<String>,
     /// A choice, as `<value>=<label>` or `<value>=<label>:<hint>`. Repeat for each choice.

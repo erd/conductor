@@ -57,11 +57,19 @@ Ask only when a wrong guess would waste the work or break a constraint. To ask:
    ```sh
    conductor decision open email-normalize \
      --title "Lowercase the whole email, or only the domain?" \
-     --about "RFC 5321 says local parts are case-sensitive, but the users table has mixed-case duplicates." \
+     --about "RFC 5321 says local parts are case-sensitive, but the users table has mixed-case duplicates.
+   - Login lookups compare emails case-insensitively
+   - New signups store the normalized form
+   - Existing rows change only if we pick the whole address" \
      --option domain="Only the domain:matches the RFC; duplicates stay" \
      --option all="The whole address:merges duplicates; needs a migration" \
      --recommend domain
    ```
+
+   Write `--about` as one or two sentences of context, then a `- ` bullet list of what is
+   going to change, one bullet per line, so it's quick to scan. Put real newlines in the
+   string: a multi-line quoted string as above, or `$'…'` with `\n`. A plain `"…\n…"` passes
+   a literal `\n`, which shows up as is.
 
    The key may use letters, digits, `-` and `_`. Each `--option` is
    `<value>=<label>` or `<value>=<label>:<hint>`, so a label can't contain `:`. Add
