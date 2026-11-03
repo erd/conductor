@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/erd/conductor/compare/v0.2.0...v0.3.0) - 2026-11-03
+
+### Added
+
+- Ask workers for a summary plus bullets in decision --about ([#53](https://github.com/erd/conductor/pull/53))
+
+### Fixed
+
+- Finish teardown when the task branch is already deleted ([#51](https://github.com/erd/conductor/pull/51))
+
 ## [0.2.0](https://github.com/erd/conductor/compare/v0.1.0...v0.2.0) - 2026-10-20
 
 ### Added
