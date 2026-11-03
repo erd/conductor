@@ -265,6 +265,38 @@ fn list_with_no_decisions() {
 }
 
 #[test]
+fn multi_line_about_keeps_its_newlines() {
+    let fx = Fixture::new();
+    let about =
+        "Local parts are case-sensitive.\n- Lookups ignore case\n- Signups store the normal form";
+    let open = fx.worker(&[
+        "decision",
+        "open",
+        "email",
+        "--title",
+        "Lowercase the whole email?",
+        "--about",
+        about,
+        "--option",
+        "domain=Only the domain",
+    ]);
+    assert_success(&open);
+    assert_eq!(fx.decision_file("email")["about"], about);
+
+    let json = fx.worker(&["decision", "list", "--json"]);
+    assert_success(&json);
+    let listed: Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(listed[0]["about"], about);
+
+    // The table leaves `about` out, so it stays one line per decision.
+    let table = fx.worker(&["decision", "list"]);
+    assert_success(&table);
+    let table = stdout(&table);
+    assert_eq!(table.lines().count(), 2, "{table}");
+    assert!(!table.contains("Lookups"), "{table}");
+}
+
+#[test]
 fn list_whole_repo_spans_tasks() {
     let fx = Fixture::new();
     std::fs::create_dir_all(fx.task_dir("add-docs-02")).unwrap();
