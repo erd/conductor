@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{Context as _, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use conductor_state::{
-    Answer, AnsweredBy, Decision, DecisionOption, Event, EventPayload, Phase, SchemaV1,
+    Answer, AnsweredBy, Decision, DecisionOption, Event, EventPayload, Phase, SchemaV2,
     append_event, decision_path, read_decision, read_decisions, read_task, task_ids,
     write_decision_atomic,
 };
@@ -143,7 +143,7 @@ fn open(args: &OpenArgs) -> anyhow::Result<()> {
         bail!("decision `{}` is already open", args.key);
     }
     let decision = Decision {
-        schema: SchemaV1,
+        schema: SchemaV2,
         key: args.key.clone(),
         title: args.title.clone(),
         about: args.about.clone().unwrap_or_default(),

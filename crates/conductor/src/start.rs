@@ -22,10 +22,10 @@ pub fn run(ctx: &Ctx, dry_run: bool) -> anyhow::Result<()> {
     let session = ctx.conductor_session();
     let args = ["-n", &session, "--permission-mode", "auto", PROMPT];
 
-    if env_var("HERDR_PANE_ID").is_none() {
+    if env_var("HC_TERMINAL_ID").is_none() {
         eprintln!(
-            "conductor: warning: not running inside herdr (HERDR_PANE_ID is unset), so workers \
-             can't be spawned into folded workspaces and the deck won't open"
+            "conductor: warning: not running in a Herdr terminal (HC_TERMINAL_ID is unset), so \
+             workers won't appear as tabs and the deck won't open"
         );
     }
 

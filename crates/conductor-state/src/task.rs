@@ -4,13 +4,13 @@ use jiff::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{Phase, SchemaV1};
+use crate::{Phase, SchemaV2};
 
 /// The task record in `task.json`. Written only by `conductor` CLI subcommands, with a
 /// write-temp-then-rename.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Task {
-    pub schema: SchemaV1,
+    pub schema: SchemaV2,
     /// Short slug from the title plus a counter, e.g. `fix-login-07`.
     pub id: String,
     pub title: String,
@@ -27,10 +27,10 @@ pub struct Task {
     pub session_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
+    /// The hc terminal the worker runs in, e.g. `t7`. Set by `conductor spawn` and
+    /// `conductor resume`; cleared by `conductor teardown` once the terminal is removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub herdr_workspace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub herdr_pane_id: Option<String>,
+    pub terminal_id: Option<String>,
     /// The task's PR. `conductor report --pr` doesn't set this: a worker writing `task.json`
     /// would race the conductor's own writes, which nothing locks. The URL a worker reports
     /// stays in its `status` event, and readers get it from

@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use std::fmt::Debug;
 
 use conductor_state::{
-    Answer, AnsweredBy, CheckState, Config, Decision, DecisionOption, DeckIcons, Error, Event,
-    EventPayload, Phase, PrState, RepoOverrides, RepoRecord, ReviewDecision, SchemaV1, Settings,
-    StatusVerb, Task, TaskKind,
+    Answer, AnsweredBy, CheckState, Config, Decision, DecisionOption, Error, Event, EventPayload,
+    Phase, PrState, RepoOverrides, RepoRecord, ReviewDecision, SchemaV2, Settings, StatusVerb,
+    Task, TaskKind,
 };
 use jiff::{SignedDuration, Timestamp};
 use serde::Serialize;
@@ -32,7 +32,7 @@ where
 
 fn minimal_task() -> Task {
     Task {
-        schema: SchemaV1,
+        schema: SchemaV2,
         id: "fix-login-07".into(),
         title: "Fix login".into(),
         kind: TaskKind::Ship,
@@ -41,8 +41,7 @@ fn minimal_task() -> Task {
         worktree_path: None,
         session_name: None,
         claude_session_id: None,
-        herdr_workspace_id: None,
-        herdr_pane_id: None,
+        terminal_id: None,
         pr_url: None,
         created_at: ts(),
         updated_at: ts(),
@@ -52,7 +51,7 @@ fn minimal_task() -> Task {
 #[test]
 fn task_minimal() {
     let doc = json!({
-        "schema": "conductor-state.v1",
+        "schema": "conductor-state.v2",
         "id": "fix-login-07",
         "title": "Fix login",
         "kind": "ship",
@@ -66,7 +65,7 @@ fn task_minimal() {
 #[test]
 fn task_full() {
     let doc = json!({
-        "schema": "conductor-state.v1",
+        "schema": "conductor-state.v2",
         "id": "map-auth-02",
         "title": "Map the auth flow",
         "kind": "scout",
@@ -75,8 +74,7 @@ fn task_full() {
         "worktree_path": "/src/app/.worktrees/conductor-map-auth-02",
         "session_name": "app-map-auth-02",
         "claude_session_id": "5f0c",
-        "herdr_workspace_id": "ws-3",
-        "herdr_pane_id": "pane-9",
+        "terminal_id": "t9",
         "pr_url": "https://github.com/erd/app/pull/12",
         "created_at": TS,
         "updated_at": "2026-10-14T13:30:05.25Z",
@@ -90,8 +88,7 @@ fn task_full() {
         worktree_path: Some("/src/app/.worktrees/conductor-map-auth-02".into()),
         session_name: Some("app-map-auth-02".into()),
         claude_session_id: Some("5f0c".into()),
-        herdr_workspace_id: Some("ws-3".into()),
-        herdr_pane_id: Some("pane-9".into()),
+        terminal_id: Some("t9".into()),
         pr_url: Some("https://github.com/erd/app/pull/12".into()),
         updated_at: "2026-10-14T13:30:05.25Z".parse().unwrap(),
         ..minimal_task()
@@ -139,8 +136,7 @@ fn event_samples() -> Vec<(Value, EventPayload)> {
             json!({"kind": "session_start", "source": "startup"}),
             EventPayload::SessionStart {
                 source: "startup".into(),
-                herdr_pane_id: None,
-                herdr_workspace_id: None,
+                terminal_id: None,
                 transcript_path: None,
             },
         ),
@@ -148,14 +144,12 @@ fn event_samples() -> Vec<(Value, EventPayload)> {
             json!({
                 "kind": "session_start",
                 "source": "resume",
-                "herdr_pane_id": "pane-9",
-                "herdr_workspace_id": "ws-3",
+                "terminal_id": "t9",
                 "transcript_path": "/home/me/.claude/projects/x/5f0c.jsonl",
             }),
             EventPayload::SessionStart {
                 source: "resume".into(),
-                herdr_pane_id: Some("pane-9".into()),
-                herdr_workspace_id: Some("ws-3".into()),
+                terminal_id: Some("t9".into()),
                 transcript_path: Some("/home/me/.claude/projects/x/5f0c.jsonl".into()),
             },
         ),
@@ -408,7 +402,7 @@ fn malformed_known_event_is_an_error() {
 
 fn decision() -> Decision {
     Decision {
-        schema: SchemaV1,
+        schema: SchemaV2,
         key: "db-choice".into(),
         title: "Which database?".into(),
         about: "The cache needs a store.".into(),
@@ -432,7 +426,7 @@ fn decision() -> Decision {
 
 fn decision_doc() -> Value {
     json!({
-        "schema": "conductor-state.v1",
+        "schema": "conductor-state.v2",
         "key": "db-choice",
         "title": "Which database?",
         "about": "The cache needs a store.",
@@ -479,7 +473,7 @@ fn decision_answered() {
 #[test]
 fn decision_defaults() {
     let doc = json!({
-        "schema": "conductor-state.v1",
+        "schema": "conductor-state.v2",
         "key": "name",
         "title": "Name the flag",
         "about": "",
@@ -493,40 +487,91 @@ fn decision_defaults() {
 #[test]
 fn repo_record() {
     let doc = json!({
-        "schema": "conductor-state.v1",
+        "schema": "conductor-state.v2",
         "repo_root": "/src/hamlet-web-v2",
         "repo_id": "hamlet-web-v2-3f9a1c",
         "conductor_session": "conductor-hamlet-web-v2",
-        "herdr_workspace_id": "ws-1",
-        "herdr_pane_id": "p-2",
+        "terminal_id": "t2",
+        "space_id": "sp01",
     });
     let record = RepoRecord {
-        schema: SchemaV1,
+        schema: SchemaV2,
         repo_root: "/src/hamlet-web-v2".into(),
         repo_id: "hamlet-web-v2-3f9a1c".into(),
         conductor_session: "conductor-hamlet-web-v2".into(),
-        herdr_workspace_id: Some("ws-1".into()),
-        herdr_pane_id: Some("p-2".into()),
+        terminal_id: Some("t2".into()),
+        space_id: Some("sp01".into()),
     };
     check(&doc, &record);
 
     let mut doc = doc;
-    doc.as_object_mut().unwrap().remove("herdr_workspace_id");
-    doc.as_object_mut().unwrap().remove("herdr_pane_id");
+    doc.as_object_mut().unwrap().remove("terminal_id");
+    doc.as_object_mut().unwrap().remove("space_id");
     check(
         &doc,
         &RepoRecord {
-            herdr_workspace_id: None,
-            herdr_pane_id: None,
+            terminal_id: None,
+            space_id: None,
             ..record
         },
+    );
+}
+
+/// Files from before the move to the Herdr GUI: a v1 marker and herdr pane and workspace ids.
+/// They read, dropping the herdr ids, and write back as v2.
+#[test]
+fn v1_files_read_without_their_herdr_ids() {
+    let task = json!({
+        "schema": "conductor-state.v1",
+        "id": "fix-login-07",
+        "title": "Fix login",
+        "kind": "ship",
+        "phase": "intake",
+        "herdr_workspace_id": "w9",
+        "herdr_pane_id": "w9:p1",
+        "created_at": TS,
+        "updated_at": TS,
+    });
+    let task: Task = serde_json::from_value(task).unwrap();
+    assert_eq!(task, minimal_task());
+    assert_eq!(
+        serde_json::to_value(&task).unwrap()["schema"],
+        "conductor-state.v2"
+    );
+
+    let record = json!({
+        "schema": "conductor-state.v1",
+        "repo_root": "/src/app",
+        "repo_id": "app-000000",
+        "conductor_session": "conductor-app",
+        "herdr_workspace_id": "w1",
+        "herdr_pane_id": "w1:p1",
+    });
+    let record: RepoRecord = serde_json::from_value(record).unwrap();
+    assert_eq!((record.terminal_id, record.space_id), (None, None));
+
+    let line = json!({
+        "ts": TS,
+        "task": "t",
+        "kind": "session_start",
+        "source": "startup",
+        "herdr_pane_id": "w9:p1",
+        "herdr_workspace_id": "w9",
+    });
+    assert_eq!(
+        serde_json::from_value::<Event>(line).unwrap().payload,
+        EventPayload::SessionStart {
+            source: "startup".into(),
+            terminal_id: None,
+            transcript_path: None,
+        }
     );
 }
 
 #[test]
 fn unknown_fields_are_ignored() {
     let mut task = json!({
-        "schema": "conductor-state.v1",
+        "schema": "conductor-state.v2",
         "id": "fix-login-07",
         "title": "Fix login",
         "kind": "ship",
@@ -563,7 +608,7 @@ fn unknown_fields_are_ignored() {
 
 #[test]
 fn wrong_schema_marker_is_rejected() {
-    for marker in [json!("conductor-state.v2"), json!(1), Value::Null] {
+    for marker in [json!("conductor-state.v3"), json!(1), Value::Null] {
         let doc = json!({
             "schema": marker,
             "repo_root": "/src/app",
@@ -591,14 +636,13 @@ fn config_defaults() {
             model: None,
             effort: None,
             branch_prefix: "conductor/".into(),
-            deck_width: 48,
-            deck_icons: DeckIcons::Unicode,
             pr_poll_interval: SignedDuration::from_mins(2),
         }
     );
     assert_eq!(config.resolve("anything"), config.defaults);
 }
 
+/// Also sets `deck_width` and `deck_icons`, which were removed: they're ignored.
 const FULL_CONFIG: &str = r#"
 model = "opus"
 effort = "high"
@@ -623,8 +667,6 @@ fn full_config() -> Config {
             model: Some("opus".into()),
             effort: Some("high".into()),
             branch_prefix: "erd/".into(),
-            deck_width: 60,
-            deck_icons: DeckIcons::Nerd,
             pr_poll_interval: SignedDuration::from_secs(45),
         },
         repos: [
@@ -632,8 +674,6 @@ fn full_config() -> Config {
                 "hamlet-web-v2-3f9a1c".to_owned(),
                 RepoOverrides {
                     model: Some("sonnet".into()),
-                    deck_width: Some(72),
-                    deck_icons: Some(DeckIcons::Unicode),
                     pr_poll_interval: Some(SignedDuration::from_mins(5)),
                     ..RepoOverrides::default()
                 },
@@ -665,8 +705,6 @@ fn config_resolve() {
             model: Some("sonnet".into()),
             effort: Some("high".into()),
             branch_prefix: "erd/".into(),
-            deck_width: 72,
-            deck_icons: DeckIcons::Unicode,
             pr_poll_interval: SignedDuration::from_mins(5),
         }
     );
@@ -683,7 +721,7 @@ fn config_load() {
     std::fs::write(&path, FULL_CONFIG).unwrap();
     assert_eq!(Config::load(&path).unwrap(), full_config());
 
-    std::fs::write(&path, "deck_width = \"wide\"").unwrap();
+    std::fs::write(&path, "branch_prefix = 3").unwrap();
     let err = Config::load(&path).unwrap_err();
     assert!(matches!(err, Error::Toml { .. }), "{err}");
     assert!(

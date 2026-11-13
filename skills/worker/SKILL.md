@@ -200,7 +200,7 @@ in the PR body, `report.md` or the decision file, not in the message.
 - Never mark the PR ready (`gh pr ready` or `conductor pr ready`). A non-draft PR means the conductor has signed off.
 - Never merge a PR or push to the default branch.
 - Never tear anything down: no `conductor teardown`, `wt remove`, deleting the branch, or
-  closing the herdr workspace.
+  closing your terminal or tab.
 - Never edit files outside the worktree, except a scout's `report.md`.
 - Never message the user directly or wait for their reply. Questions go through
   `conductor decision open` and the conductor.

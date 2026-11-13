@@ -76,7 +76,7 @@ impl Fixture {
             .collect()
     }
 
-    /// `conductor <args>` with no conductor or herdr variables, run outside any repo.
+    /// `conductor <args>` with no conductor or hc variables, run outside any repo.
     fn bare(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_conductor"));
         command
@@ -86,8 +86,10 @@ impl Fixture {
             .env_remove("CONDUCTOR_TASK_ID")
             .env_remove("CONDUCTOR_ROLE")
             .env_remove("CONDUCTOR_REPO_ID")
-            .env_remove("HERDR_PANE_ID")
-            .env_remove("HERDR_WORKSPACE_ID");
+            .env_remove("HC_TERMINAL_ID")
+            .env_remove("HC_TERMINAL_SOCKET")
+            .env_remove("HC_SCOPE")
+            .env_remove("HC_SESSION");
         command
     }
 
@@ -177,7 +179,7 @@ fn open_list_answer_list() {
     assert_eq!(
         fx.decision_file("db"),
         json!({
-            "schema": "conductor-state.v1",
+            "schema": "conductor-state.v2",
             "key": "db",
             "title": "Which database?",
             "about": "Needs to run in CI",

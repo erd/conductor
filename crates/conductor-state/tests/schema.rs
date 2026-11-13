@@ -5,7 +5,7 @@ const REGENERATE: &str = "UPDATE_SCHEMA=1 cargo test -p conductor-state --test s
 
 #[test]
 fn committed_schema_is_current() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schema/conductor-state.v1.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schema/conductor-state.v2.json");
     let generated = serde_json::to_string_pretty(&conductor_state::json_schema()).unwrap() + "\n";
 
     if env::var_os("UPDATE_SCHEMA").is_some() {

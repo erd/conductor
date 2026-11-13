@@ -8,33 +8,38 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::{Config, Decision, Event, RepoRecord, Task};
 
 /// The schema marker written into every top-level state file.
-pub const SCHEMA_ID: &str = "conductor-state.v1";
+pub const SCHEMA_ID: &str = "conductor-state.v2";
 
-/// The `"schema": "conductor-state.v1"` marker. Serializes as [`SCHEMA_ID`] and refuses to
-/// deserialize anything else, so a reader never misreads a file from an incompatible version.
+/// The marker of files written for the herdr TUI. They still read: v2 only renamed the herdr
+/// pane and workspace fields, which a v1 file's reader drops as unknown fields.
+pub const SCHEMA_ID_V1: &str = "conductor-state.v1";
+
+/// The `"schema": "conductor-state.v2"` marker. Serializes as [`SCHEMA_ID`]. Deserializes it or
+/// [`SCHEMA_ID_V1`] and refuses anything else, so a reader never misreads a file from an
+/// incompatible version.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct SchemaV1;
+pub struct SchemaV2;
 
-impl Serialize for SchemaV1 {
+impl Serialize for SchemaV2 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(SCHEMA_ID)
     }
 }
 
-impl<'de> Deserialize<'de> for SchemaV1 {
+impl<'de> Deserialize<'de> for SchemaV2 {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct MarkerVisitor;
 
         impl Visitor<'_> for MarkerVisitor {
-            type Value = SchemaV1;
+            type Value = SchemaV2;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(f, "the string {SCHEMA_ID:?}")
             }
 
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<SchemaV1, E> {
-                if v == SCHEMA_ID {
-                    Ok(SchemaV1)
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<SchemaV2, E> {
+                if v == SCHEMA_ID || v == SCHEMA_ID_V1 {
+                    Ok(SchemaV2)
                 } else {
                     Err(E::invalid_value(Unexpected::Str(v), &self))
                 }
@@ -45,9 +50,9 @@ impl<'de> Deserialize<'de> for SchemaV1 {
     }
 }
 
-impl JsonSchema for SchemaV1 {
+impl JsonSchema for SchemaV2 {
     fn schema_name() -> Cow<'static, str> {
-        "SchemaV1".into()
+        "SchemaV2".into()
     }
 
     fn inline_schema() -> bool {

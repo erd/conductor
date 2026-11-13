@@ -49,7 +49,7 @@ pub fn run(command: &PrCommand) -> anyhow::Result<()> {
             ready(
                 &target.task_dir()?,
                 &System,
-                &Tools::resolve(),
+                &Tools::default(),
                 &mut std::io::stdout().lock(),
             )
         }
@@ -270,7 +270,7 @@ fn ready(
 mod tests {
     use std::path::PathBuf;
 
-    use conductor_state::{SchemaV1, StatusVerb, Task, write_task_atomic};
+    use conductor_state::{SchemaV2, StatusVerb, Task, write_task_atomic};
     use tempfile::TempDir;
 
     use super::*;
@@ -301,7 +301,7 @@ mod tests {
             };
             let ts = "2026-10-14T12:00:00Z".parse().unwrap();
             let task = Task {
-                schema: SchemaV1,
+                schema: SchemaV2,
                 id: ID.into(),
                 title: "Fix login".into(),
                 kind,
@@ -310,8 +310,7 @@ mod tests {
                 worktree_path: None,
                 session_name: None,
                 claude_session_id: None,
-                herdr_workspace_id: None,
-                herdr_pane_id: None,
+                terminal_id: None,
                 pr_url: None,
                 created_at: ts,
                 updated_at: ts,

@@ -1,6 +1,6 @@
 # Smoke test
 
-A manual end-to-end check of the whole system: the CLI, the plugin's hooks and skills, herdr,
+A manual end-to-end check of the whole system: the CLI, the plugin's hooks and skills, Herdr,
 worktrunk and GitHub, driven through the conductor the way a user would. Run it before a
 release, or after a change that touches more than one of those pieces.
 
@@ -10,7 +10,7 @@ It takes about 30 minutes, most of it waiting on workers. Tick each box as you g
 ## Setup
 
 - [ ] The [requirements](../README.md#requirements) are installed, `gh auth status` passes,
-      and you're inside herdr.
+      and you're in a Herdr terminal (`echo $HC_TERMINAL_ID` prints `t…`).
 - [ ] Install the build under test, with either of these:
 
   ```sh
@@ -48,8 +48,11 @@ It takes about 30 minutes, most of it waiting on workers. Tick each box as you g
 
 - [ ] `conductor start` opens the conductor's Claude session and loads the `conductor` skill.
       The conductor greets you as the conductor for `conductor-smoke`.
-- [ ] If the deck plugin is installed, the deck opens to the right.
-- [ ] In another pane, `conductor status` prints an empty table.
+- [ ] If the deck mod is installed, the deck opens to the right.
+- [ ] `repo.json` in `$CONDUCTOR_HOME/repos/<repo-id>/` records the conductor's
+      `terminal_id` and `space_id`.
+- [ ] In another tab, `conductor status` prints an empty table, and `conductor deck --json`
+      prints the repo with no tasks.
 
 ## 2. One ship task and one scout task
 
@@ -62,8 +65,9 @@ Give the conductor a goal that splits into one change and one question, e.g.:
       task for the question.
 - [ ] Once you agree, it briefs and spawns both. `conductor status` shows them `working`, each
       with a branch.
-- [ ] herdr shows two new workspaces folded under the conductor's, labelled with the task ids,
-      each running a worker `claude` session in its worktree (`.worktrees/…`).
+- [ ] Herdr shows two new tabs in the conductor's space, named after the task ids, each running
+      a worker `claude` session in its worktree (`.worktrees/…`). `conductor task show <id>`
+      lists each one's terminal.
 - [ ] `conductor status` shows live activity (tools, idle) that changes as the workers run.
 
 ## 3. A decision answered from the conductor
@@ -87,7 +91,7 @@ To force a decision, message the ship worker through the conductor right after i
 - [ ] The scout worker writes `report.md` and reports `done`. The conductor wakes, summarizes
       the report for you, and tears the scout task down.
 - [ ] `conductor status --all` shows the scout task `torn_down`. Its worktree, branch and
-      herdr workspace are gone.
+      tab are gone, and `hc ls` no longer lists its terminal.
 
 ## 5. Draft PR → ready → merged → automatic teardown
 
@@ -99,40 +103,40 @@ To force a decision, message the ship worker through the conductor right after i
 - [ ] Merge the PR on GitHub (any merge style).
 - [ ] Within the PR poll interval, `conductor watch` wakes the conductor. The task moves to
       `merged`, and the conductor runs `conductor teardown` without being asked.
-- [ ] Teardown pulls `main` in the main checkout, stops the worker, removes the worktree and
-      branch, and closes the workspace. `conductor status --all` shows `torn_down` and the PR
+- [ ] Teardown pulls `main` in the main checkout, stops the worker (its tab closes), and
+      removes the worktree and branch. `conductor status --all` shows `torn_down` and the PR
       as `merged`.
 
-## 6. Close the conductor's workspace, then resume
+## 6. Close the conductor's tab, then resume
 
 Set up a live task to resume:
 
 - [ ] Give the conductor a small new ship task (e.g. "add a `sub` function to calc.py"), and
       wait until it's `working` and the worker has made at least one tool call.
-- [ ] Note the task id and its pane id (`conductor task show <id>`).
+- [ ] Note the task id and its terminal (`conductor task show <id>`).
 
 Close everything:
 
-- [ ] In herdr, close the conductor's workspace row. The worker's workspace closes with it.
-      From the CLI that's `herdr workspace close <id> --group`; without `--group`, herdr
-      refuses a workspace that has linked worktree workspaces.
+- [ ] In Herdr, close the conductor's tab. The worker's terminal is its child, so the
+      worker's tab closes with it.
 - [ ] `conductor status` still lists the task as `working`. Its activity may lag, since the
       session ended without a clean exit.
 - [ ] `ls .worktrees/` and `git branch` show the worktree and branch still there.
 
 Bring it back:
 
-- [ ] Open a new herdr workspace in the repo's main checkout. In its shell, before starting
-      the conductor, `conductor resume --dry-run` prints a `herdr worktree open` and a
-      `herdr pane run … claude --resume <session-id> …` line for the task.
+- [ ] Open a new tab in the space, in the repo's main checkout. In its shell, before starting
+      the conductor, `conductor resume --dry-run` prints `hc rm <old terminal>` (if hc still
+      lists it) and an `hc run … claude --resume <session-id> …` line for the task.
 - [ ] Run `conductor start` there (with the same `CONDUCTOR_HOME`). The fresh conductor sees
       the live task and runs `conductor resume` itself, which prints
-      `<id> resumed in pane <pane>`. If it doesn't, ask it to resume the workers.
-- [ ] A new workspace for the task appears under the conductor's. Its worker is the old
-      session, with its history, in the worktree.
-- [ ] `conductor task show <id>` shows the new workspace and pane ids. `conductor status`
-      shows live activity again once the worker does something.
-- [ ] Running `conductor resume` again prints `<id> skipped: pane <pane> is still open`.
+      `<id> resumed in terminal <terminal>`. If it doesn't, ask it to resume the workers.
+- [ ] A new tab named after the task appears in the space. Its worker is the old session, with
+      its history, in the worktree.
+- [ ] `conductor task show <id>` shows the new terminal. `conductor status` shows live activity
+      again once the worker does something.
+- [ ] Running `conductor resume` again prints `<id> skipped: terminal <terminal> is still
+      running`.
 - [ ] The resumed worker can still reach the new conductor: when it next reports (or when you
       ask it to, through the conductor), the report shows up in `conductor status` and the
       conductor acts on it.
@@ -152,13 +156,13 @@ Copy this into the PR and fill it in.
 ### Smoke test
 
 - Date / commit:
-- herdr / worktrunk / Claude Code versions:
+- Herdr.app / herdr-core / worktrunk / Claude Code versions:
 - 1. Start: pass / fail
 - 2. Ship and scout tasks: pass / fail
 - 3. Decision: pass / fail
 - 4. Scout teardown: pass / fail
 - 5. PR → merged → teardown: pass / fail
-- 6. Close and resume: pass / fail
+- 6. Close the tab and resume: pass / fail
 - Notes:
 - Follow-up issues:
 ```

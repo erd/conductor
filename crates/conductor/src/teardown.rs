@@ -1,6 +1,6 @@
 //! `conductor teardown <task>`: once a task is finished, pulls the default branch, stops the
-//! worker, removes the worktree and branch, closes the herdr workspace, and moves the task to
-//! `torn_down` (or `abandoned` with `--abandon`).
+//! worker and removes its terminal (which closes its tab), removes the worktree and branch, and
+//! moves the task to `torn_down` (or `abandoned` with `--abandon`).
 //!
 //! A ship task is torn down only after GitHub reports its PR merged; nothing is merged locally.
 //! The PR's final state is recorded as a `pr` event, since `conductor watch` stops polling the
@@ -21,15 +21,15 @@ use conductor_state::{
 };
 use jiff::Timestamp;
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::context::{Ctx, Target};
+use crate::hc;
 use crate::pr;
-use crate::runner::{Cmd, RunOutput, Runner, System, Tools, check, check_wt, failure, parse_json};
+use crate::runner::{Cmd, Runner, System, Tools, check, check_wt, failure, parse_json};
 use crate::status::snake_case;
 use crate::task::move_phase;
 
-/// How long the worker gets to exit after `/exit` before its pane is closed.
+/// How long the worker gets to exit after `/exit` before its terminal is killed.
 const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often to look for the worker's `session_end` while waiting.
 const EXIT_POLL: Duration = Duration::from_millis(200);
@@ -56,7 +56,7 @@ pub fn run(args: &TeardownArgs) -> anyhow::Result<()> {
         &ctx,
         args,
         &System,
-        &Tools::resolve(),
+        &Tools::default(),
         EXIT_TIMEOUT,
         &mut std::io::stdout().lock(),
         &mut std::io::stderr().lock(),
@@ -166,8 +166,7 @@ fn teardown(
     let result = (|| {
         steps.pull()?;
         steps.stop_worker(&mut task, exited, events.offset)?;
-        steps.remove_worktree(&mut task, force_delete)?;
-        steps.close_workspace(&mut task)
+        steps.remove_worktree(&mut task, force_delete)
     })();
     result.with_context(|| {
         format!("cannot tear down {id}; rerun `conductor teardown` to continue")
@@ -221,49 +220,67 @@ impl Steps<'_> {
         Ok(())
     }
 
-    /// Asks the worker to `/exit`, waits for its `session_end`, and closes its pane if it
-    /// doesn't come. `exited` says the session had already ended; `offset` is where the events
-    /// read so far end.
+    /// Asks the worker to `/exit` and waits for its `session_end`, then kills and removes its
+    /// terminal, which closes its tab. `exited` says the session had already ended; `offset` is
+    /// where the events read so far end.
+    ///
+    /// `hc send` waits up to a minute while a person has typed into the worker's terminal and
+    /// not sent it. It refuses outright when the worker is waiting on a permission prompt or a
+    /// question; the terminal is then killed without asking.
     fn stop_worker(&mut self, task: &mut Task, exited: bool, offset: u64) -> anyhow::Result<()> {
-        let Some(pane) = task.herdr_pane_id.clone() else {
+        let Some(terminal) = task.terminal_id.clone() else {
             return Ok(());
         };
-        if !exited && self.send_exit(&pane)? {
-            if self.wait_exited(offset)? {
-                writeln!(self.out, "stopped the worker in pane {pane}")?;
-            } else {
-                let close = self.herdr(&["pane", "close", &pane]);
-                let output = self.runner.run(&close)?;
-                if !not_found(&output) {
-                    check("herdr pane close", output)?;
+        if let Some(term) = hc::get(self.runner, self.tools, &terminal)? {
+            if term.live() {
+                let note = if exited {
+                    None
+                } else {
+                    match self.send_exit(&terminal)? {
+                        Exit::Sent if self.wait_exited(offset)? => {
+                            Some(format!("stopped the worker in terminal {terminal}"))
+                        }
+                        Exit::Sent => Some(format!(
+                            "killed terminal {terminal}: the worker didn't exit"
+                        )),
+                        Exit::Blocked => Some(format!(
+                            "killed terminal {terminal}: the worker was waiting on a prompt"
+                        )),
+                        Exit::Gone => None,
+                    }
+                };
+                let output = self.runner.run(&self.hc(&["kill", &terminal]))?;
+                if !hc::failed_with(&output, hc::NOT_FOUND)
+                    && !hc::failed_with(&output, hc::FINISHED)
+                {
+                    check("hc kill", output)?;
                 }
-                writeln!(self.out, "closed pane {pane}: the worker didn't exit")?;
+                if let Some(note) = note {
+                    writeln!(self.out, "{note}")?;
+                }
+            }
+            let output = self.runner.run(&self.hc(&["rm", &terminal]))?;
+            if !hc::failed_with(&output, hc::NOT_FOUND) {
+                check("hc rm", output)?;
             }
         }
-        task.herdr_pane_id = None;
+        task.terminal_id = None;
         save(self.task_dir, task)
     }
 
-    /// Types `/exit` and Enter into `pane`. False if the pane is gone.
-    fn send_exit(&mut self, pane: &str) -> anyhow::Result<bool> {
-        let steps = [
-            (
-                "herdr pane send-text",
-                self.herdr(&["pane", "send-text", pane, "/exit"]),
-            ),
-            (
-                "herdr pane send-keys",
-                self.herdr(&["pane", "send-keys", pane, "enter"]),
-            ),
-        ];
-        for (what, cmd) in steps {
-            let output = self.runner.run(&cmd)?;
-            if not_found(&output) {
-                return Ok(false);
-            }
-            check(what, output)?;
+    /// Pastes `/exit` into `terminal` and presses Enter.
+    fn send_exit(&mut self, terminal: &str) -> anyhow::Result<Exit> {
+        let output = self.runner.run(&self.hc(&["send", terminal, "/exit"]))?;
+        if output.success() {
+            Ok(Exit::Sent)
+        } else if hc::failed_with(&output, hc::BLOCKED) {
+            Ok(Exit::Blocked)
+        } else if hc::failed_with(&output, hc::NOT_FOUND) || hc::failed_with(&output, hc::FINISHED)
+        {
+            Ok(Exit::Gone)
+        } else {
+            Err(failure("hc send", &output))
         }
-        Ok(true)
     }
 
     /// Whether a `session_end` event shows up after `offset` within the exit timeout.
@@ -384,22 +401,6 @@ impl Steps<'_> {
             .any(|listed| Path::new(listed) == path))
     }
 
-    /// Closes the task's herdr workspace, which may already be gone.
-    fn close_workspace(&mut self, task: &mut Task) -> anyhow::Result<()> {
-        let Some(workspace) = task.herdr_workspace_id.clone() else {
-            return Ok(());
-        };
-        let output = self
-            .runner
-            .run(&self.herdr(&["workspace", "close", &workspace]))?;
-        if !not_found(&output) {
-            check("herdr workspace close", output)?;
-        }
-        writeln!(self.out, "closed workspace {workspace}")?;
-        task.herdr_workspace_id = None;
-        save(self.task_dir, task)
-    }
-
     fn git(&self, args: &[&str]) -> Cmd {
         Cmd::new(&self.tools.git)
             .arg("-C")
@@ -413,19 +414,18 @@ impl Steps<'_> {
             .arg(self.root.to_string_lossy())
     }
 
-    fn herdr(&self, args: &[&str]) -> Cmd {
-        Cmd::new(&self.tools.herdr).args(args.iter().copied())
+    fn hc(&self, args: &[&str]) -> Cmd {
+        Cmd::new(&self.tools.hc).args(args.iter().copied())
     }
 }
 
-/// Whether a herdr command failed because its pane or workspace doesn't exist. herdr prints
-/// errors as JSON on stderr, e.g. `{"error":{"code":"pane_not_found",…}}`.
-fn not_found(output: &RunOutput) -> bool {
-    !output.success()
-        && serde_json::from_str::<Value>(output.stderr.trim())
-            .ok()
-            .and_then(|v| v.pointer("/error/code")?.as_str().map(str::to_owned))
-            .is_some_and(|code| code.ends_with("_not_found"))
+/// What came of asking the worker to `/exit`.
+enum Exit {
+    Sent,
+    /// The worker is waiting on a person, so hc refused to type into it.
+    Blocked,
+    /// The terminal ended or was removed in the meantime.
+    Gone,
 }
 
 /// Writes `task.json` with what a step changed.
@@ -440,11 +440,12 @@ mod tests {
     use std::path::PathBuf;
 
     use conductor_state::{
-        Event, Home, RepoIdent, SchemaV1, Settings, StatusVerb, append_event, write_task_atomic,
+        Event, Home, RepoIdent, SchemaV2, Settings, StatusVerb, append_event, write_task_atomic,
     };
     use tempfile::TempDir;
 
     use super::*;
+    use crate::hc::tests::get_json;
     use crate::runner::Fake;
 
     const ID: &str = "fix-login-07";
@@ -452,8 +453,8 @@ mod tests {
     const BRANCH: &str = "conductor/fix-login-07";
     const WORKTREE: &str = "/src/my-repo/.worktrees/conductor-fix-login-07";
     const PR: &str = "https://github.com/o/my-repo/pull/12";
-    const PANE_GONE: &str = r#"{"error":{"code":"pane_not_found","message":"pane w9:p1 not found"},"id":"cli:request"}"#;
-    const WORKSPACE_GONE: &str = r#"{"error":{"code":"workspace_not_found","message":"workspace w9 not found"},"id":"cli:request"}"#;
+    const GONE: &str = r#"{"error":{"hint":"see `hc ls --all`","kind":"not_found","message":"no terminal \"t7\""}}"#;
+    const BLOCKED: &str = r#"{"error":{"kind":"blocked","message":"t7 is blocked"}}"#;
 
     struct Fixture {
         _tmp: TempDir,
@@ -487,7 +488,7 @@ mod tests {
             };
             let ts = "2026-10-14T12:00:00Z".parse().unwrap();
             let task = Task {
-                schema: SchemaV1,
+                schema: SchemaV2,
                 id: ID.into(),
                 title: "Fix login".into(),
                 kind,
@@ -496,8 +497,7 @@ mod tests {
                 worktree_path: Some(WORKTREE.into()),
                 session_name: Some("my-repo-fix-login-07".into()),
                 claude_session_id: None,
-                herdr_workspace_id: Some("w9".into()),
-                herdr_pane_id: Some("w9:p1".into()),
+                terminal_id: Some("t7".into()),
                 pr_url: None,
                 created_at: ts,
                 updated_at: ts,
@@ -630,11 +630,23 @@ mod tests {
             .ok(&["git", "-C", ROOT, "pull", "--ff-only"], "")
     }
 
-    /// `/exit` that the worker ignores, so its pane is closed.
+    /// The worker's terminal `t7` is live, running the worker.
+    fn live(fake: Fake) -> Fake {
+        fake.ok(
+            &["hc", "get", "t7", "--json"],
+            &get_json("live", &["env", "CONDUCTOR_TASK_ID=fix-login-07", "claude"]),
+        )
+    }
+
+    /// Kills and removes terminal `t7`.
+    fn kill(fake: Fake) -> Fake {
+        fake.ok(&["hc", "kill", "t7"], "")
+            .ok(&["hc", "rm", "t7"], "")
+    }
+
+    /// `/exit` that the worker ignores, so its terminal is killed.
     fn stop(fake: Fake) -> Fake {
-        fake.ok(&["herdr", "pane", "send-text", "w9:p1", "/exit"], "")
-            .ok(&["herdr", "pane", "send-keys", "w9:p1", "enter"], "")
-            .ok(&["herdr", "pane", "close", "w9:p1"], "")
+        kill(live(fake).ok(&["hc", "send", "t7", "/exit"], ""))
     }
 
     /// The branch still exists.
@@ -696,16 +708,11 @@ mod tests {
         )
     }
 
-    fn close(fake: Fake) -> Fake {
-        fake.ok(&["herdr", "workspace", "close", "w9"], "")
-    }
-
     fn assert_torn_down(fx: &Fixture) {
         let task = fx.task();
         assert_eq!(task.phase, Phase::TornDown);
-        assert_eq!(task.herdr_pane_id, None);
+        assert_eq!(task.terminal_id, None);
         assert_eq!(task.worktree_path, None);
-        assert_eq!(task.herdr_workspace_id, None);
         assert_eq!(
             task.branch.as_deref(),
             Some(BRANCH),
@@ -716,7 +723,7 @@ mod tests {
     #[test]
     fn merged_with_clean_default_branch_pulls() {
         let fx = Fixture::new(TaskKind::Ship, Phase::AwaitingMerge);
-        let fake = close(remove(stop(pull(merged(Fake::default()))), "deleted"));
+        let fake = remove(stop(pull(merged(Fake::default()))), "deleted");
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
@@ -743,7 +750,16 @@ mod tests {
             ]
         );
         assert_eq!(
-            argvs[8],
+            argvs[5..9],
+            [
+                vec!["hc", "get", "t7", "--json"],
+                vec!["hc", "send", "t7", "/exit"],
+                vec!["hc", "kill", "t7"],
+                vec!["hc", "rm", "t7"],
+            ]
+        );
+        assert_eq!(
+            argvs[9],
             [
                 "git",
                 "-C",
@@ -755,7 +771,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            argvs[9],
+            argvs[10],
             [
                 "wt",
                 "-C",
@@ -770,9 +786,8 @@ mod tests {
             run.out,
             format!(
                 "pulled main\n\
-                 closed pane w9:p1: the worker didn't exit\n\
+                 killed terminal t7: the worker didn't exit\n\
                  removed worktree {WORKTREE} and branch {BRANCH}\n\
-                 closed workspace w9\n\
                  {ID} torn_down\n"
             )
         );
@@ -784,7 +799,7 @@ mod tests {
         let fx = Fixture::new(TaskKind::Ship, Phase::Merged);
         let fake =
             on_branch(merged(Fake::default()), "feat-x").ok(&["git", "-C", ROOT, "fetch"], "");
-        let fake = close(remove(stop(fake), "deleted"));
+        let fake = remove(stop(fake), "deleted");
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
@@ -803,7 +818,7 @@ mod tests {
         let fake = on_branch(merged(Fake::default()), "main")
             .ok(&["git", "-C", ROOT, "status"], " M src/x.rs\n")
             .ok(&["git", "-C", ROOT, "fetch"], "");
-        let fake = close(remove(stop(fake), "deleted"));
+        let fake = remove(stop(fake), "deleted");
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(
@@ -817,7 +832,7 @@ mod tests {
             .ok(&["wt", "-C", ROOT, "config"], "main\n")
             .fail(&["git", "-C", ROOT, "symbolic-ref"], 1, "")
             .ok(&["git", "-C", ROOT, "fetch"], "");
-        let fake = close(remove(stop(fake), "deleted"));
+        let fake = remove(stop(fake), "deleted");
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(
@@ -831,13 +846,13 @@ mod tests {
     fn worktrunk_keeping_a_merged_branch_falls_back_to_force_delete() {
         let fx = Fixture::new(TaskKind::Ship, Phase::Merged);
         let fake = remove(stop(pull(merged(Fake::default()))), RETAINED_UNMERGED);
-        let fake = close(remove_again(fake, "deleted"));
+        let fake = remove_again(fake, "deleted");
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
         let argvs = fake.argvs();
-        assert_eq!(argvs[10].last().map(String::as_str), Some("-D"));
-        assert_eq!(argvs[9].last().map(String::as_str), Some("--format=json"));
+        assert_eq!(argvs[11].last().map(String::as_str), Some("-D"));
+        assert_eq!(argvs[10].last().map(String::as_str), Some("--format=json"));
         assert_torn_down(&fx);
     }
 
@@ -897,7 +912,7 @@ mod tests {
     #[test]
     fn scout_in_review_tears_down_without_checking_github() {
         let fx = Fixture::new(TaskKind::Scout, Phase::Review);
-        let fake = close(remove(stop(pull(Fake::default())), "deleted"));
+        let fake = remove(stop(pull(Fake::default())), "deleted");
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
@@ -910,7 +925,7 @@ mod tests {
     fn abandon_records_the_pr_and_keeps_an_unmerged_branch() {
         let fx = Fixture::new(TaskKind::Ship, Phase::Working);
         let fake = pr_view(Fake::default(), "CLOSED");
-        let fake = close(remove(stop(pull(fake)), RETAINED_UNMERGED));
+        let fake = remove(stop(pull(fake)), RETAINED_UNMERGED);
         let run = fx.teardown(&fake, &["--abandon"]);
         run.result.unwrap();
         assert!(fake.done(), "no -D");
@@ -929,7 +944,7 @@ mod tests {
         let task = fx.task();
         assert_eq!(task.phase, Phase::Abandoned);
         assert_eq!(task.worktree_path, None);
-        assert_eq!(task.herdr_workspace_id, None);
+        assert_eq!(task.terminal_id, None);
         assert_eq!(fx.phases(), [(Phase::Working, Phase::Abandoned)]);
     }
 
@@ -938,11 +953,11 @@ mod tests {
         let fx = Fixture::new(TaskKind::Ship, Phase::Abandoned);
         let fake = pr_view(Fake::default(), "CLOSED");
         let fake = remove(stop(pull(fake)), RETAINED_UNMERGED);
-        let fake = close(remove_again(fake, "deleted"));
+        let fake = remove_again(fake, "deleted");
         let run = fx.teardown(&fake, &["--abandon", "--force-delete-branch"]);
         run.result.unwrap();
         assert!(fake.done());
-        assert_eq!(fake.argvs()[10].last().map(String::as_str), Some("-D"));
+        assert_eq!(fake.argvs()[11].last().map(String::as_str), Some("-D"));
         assert_eq!(run.err, "");
         assert_eq!(fx.task().phase, Phase::Abandoned);
         assert_eq!(fx.phases(), [], "already abandoned");
@@ -957,7 +972,7 @@ mod tests {
             review: None,
         });
         let fake = Fake::default().fail(&["gh", "pr", "view", PR], 1, "HTTP 502");
-        let fake = close(remove(stop(pull(fake)), "deleted"));
+        let fake = remove(stop(pull(fake)), "deleted");
         let run = fx.teardown(&fake, &["--abandon"]);
         run.result.unwrap();
         assert!(fake.done());
@@ -971,19 +986,17 @@ mod tests {
 
         // A scout task has no PR to refresh.
         let fx = Fixture::new(TaskKind::Scout, Phase::Working);
-        let fake = close(remove(stop(pull(Fake::default())), "deleted"));
+        let fake = remove(stop(pull(Fake::default())), "deleted");
         fx.teardown(&fake, &["--abandon"]).result.unwrap();
         assert!(fake.argvs().iter().all(|argv| argv[0] != "gh"));
     }
 
     #[test]
-    fn worker_that_exits_keeps_its_pane() {
+    fn worker_that_exits_is_stopped() {
         let mut fx = Fixture::new(TaskKind::Scout, Phase::Review);
         fx.exit_timeout = Duration::from_secs(5);
-        let fake = pull(Fake::default())
-            .ok(&["herdr", "pane", "send-text"], "")
-            .ok(&["herdr", "pane", "send-keys"], "");
-        let fake = close(remove(fake, "deleted"));
+        let fake = kill(live(pull(Fake::default())).ok(&["hc", "send", "t7", "/exit"], ""));
+        let fake = remove(fake, "deleted");
         let task_dir = fx.task_dir();
         let worker = thread::spawn(move || {
             thread::sleep(Duration::from_millis(300));
@@ -995,9 +1008,9 @@ mod tests {
         let run = fx.teardown(&fake, &[]);
         worker.join().unwrap();
         run.result.unwrap();
-        assert!(fake.done(), "no pane close");
+        assert!(fake.done());
         assert!(
-            run.out.contains("stopped the worker in pane w9:p1\n"),
+            run.out.contains("stopped the worker in terminal t7\n"),
             "{}",
             run.out
         );
@@ -1010,44 +1023,77 @@ mod tests {
         fx.append(EventPayload::SessionEnd {
             reason: "other".into(),
         });
-        let fake = close(remove(pull(Fake::default()), "deleted"));
+        let fake = remove(kill(live(pull(Fake::default()))), "deleted");
+        let run = fx.teardown(&fake, &[]);
+        run.result.unwrap();
+        assert!(fake.done(), "no /exit");
+        assert!(!run.out.contains("terminal"), "{}", run.out);
+        assert_torn_down(&fx);
+    }
+
+    #[test]
+    fn gone_or_finished_terminals_are_fine() {
+        // Already removed.
+        let fx = Fixture::new(TaskKind::Scout, Phase::Review);
+        let fake = pull(Fake::default()).fail(&["hc", "get", "t7"], hc::NOT_FOUND, GONE);
+        let fake = remove(fake, "deleted");
+        fx.teardown(&fake, &[]).result.unwrap();
+        assert!(fake.done());
+        assert_torn_down(&fx);
+
+        // Finished, but not removed: just removed.
+        let fx = Fixture::new(TaskKind::Scout, Phase::Review);
+        let fake = pull(Fake::default())
+            .ok(&["hc", "get", "t7"], &get_json("finished", &["env"]))
+            .ok(&["hc", "rm", "t7"], "");
+        let fake = remove(fake, "deleted");
+        fx.teardown(&fake, &[]).result.unwrap();
+        assert!(fake.done());
+        assert_torn_down(&fx);
+
+        // Gone during the teardown.
+        let fx = Fixture::new(TaskKind::Scout, Phase::Review);
+        let fake = live(pull(Fake::default()))
+            .fail(&["hc", "send", "t7"], hc::NOT_FOUND, GONE)
+            .fail(&["hc", "kill", "t7"], hc::NOT_FOUND, GONE)
+            .fail(&["hc", "rm", "t7"], hc::NOT_FOUND, GONE);
+        let fake = remove(fake, "deleted");
         fx.teardown(&fake, &[]).result.unwrap();
         assert!(fake.done());
         assert_torn_down(&fx);
     }
 
     #[test]
-    fn missing_pane_and_workspace_are_fine() {
-        let fx = Fixture::new(TaskKind::Scout, Phase::Review);
-        let fake = pull(Fake::default()).fail(&["herdr", "pane", "send-text"], 1, PANE_GONE);
-        let fake =
-            remove(fake, "deleted").fail(&["herdr", "workspace", "close"], 1, WORKSPACE_GONE);
-        fx.teardown(&fake, &[]).result.unwrap();
+    fn blocked_worker_is_killed_without_waiting() {
+        let mut fx = Fixture::new(TaskKind::Scout, Phase::Review);
+        fx.exit_timeout = Duration::from_secs(60);
+        let fake = live(pull(Fake::default())).fail(&["hc", "send", "t7"], hc::BLOCKED, BLOCKED);
+        let fake = remove(kill(fake), "deleted");
+        let started = Instant::now();
+        let run = fx.teardown(&fake, &[]);
+        run.result.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
         assert!(fake.done());
-        assert_torn_down(&fx);
-
-        // The pane goes away during the wait.
-        let fx = Fixture::new(TaskKind::Scout, Phase::Review);
-        let fake = pull(Fake::default())
-            .ok(&["herdr", "pane", "send-text"], "")
-            .ok(&["herdr", "pane", "send-keys"], "")
-            .fail(&["herdr", "pane", "close"], 1, PANE_GONE);
-        let fake = close(remove(fake, "deleted"));
-        fx.teardown(&fake, &[]).result.unwrap();
-        assert!(fake.done());
+        assert!(
+            run.out
+                .contains("killed terminal t7: the worker was waiting on a prompt\n"),
+            "{}",
+            run.out
+        );
         assert_torn_down(&fx);
     }
 
     #[test]
     fn other_failures_stop_teardown() {
         let fx = Fixture::new(TaskKind::Scout, Phase::Review);
-        let fake = pull(Fake::default()).fail(&["herdr", "pane", "send-text"], 1, "socket closed");
+        let fake = live(pull(Fake::default())).fail(&["hc", "send", "t7"], 1, "socket closed");
         let err = format!("{:#}", fx.teardown(&fake, &[]).result.unwrap_err());
         assert_eq!(
             err,
             "cannot tear down fix-login-07; rerun `conductor teardown` to continue: \
-             `herdr pane send-text` failed (exit 1): socket closed"
+             `hc send` failed (exit 1): socket closed"
         );
+        assert_eq!(fx.task().terminal_id.as_deref(), Some("t7"));
 
         let fx = Fixture::new(TaskKind::Scout, Phase::Review);
         let fake = remove(stop(pull(Fake::default())), "retained_checked_out");
@@ -1088,12 +1134,12 @@ mod tests {
         let fx = Fixture::new(TaskKind::Ship, Phase::Merged);
         let fake = worktrees(branch_gone(stop(pull(merged(Fake::default())))), true);
         let removed = r#"[{"branch":null,"branch_outcome":"not_attempted","kind":"worktree"}]"#;
-        let fake = close(fake.ok(&["wt", "-C", ROOT, "remove", WORKTREE], removed));
+        let fake = fake.ok(&["wt", "-C", ROOT, "remove", WORKTREE], removed);
         let run = fx.teardown(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
         assert_eq!(
-            fake.argvs()[10],
+            fake.argvs()[11],
             [
                 "wt",
                 "-C",
@@ -1124,7 +1170,6 @@ mod tests {
         ] {
             let fx = Fixture::new(TaskKind::Ship, Phase::Merged);
             let fake = worktrees(branch_gone(stop(pull(merged(Fake::default())))), false);
-            let fake = close(fake);
             let run = fx.teardown(&fake, extra);
             run.result.unwrap();
             assert!(fake.done(), "{extra:?}");
@@ -1143,7 +1188,7 @@ mod tests {
             let task = fx.task();
             assert_eq!(task.phase, phase, "{extra:?}");
             assert_eq!(task.worktree_path, None);
-            assert_eq!(task.herdr_workspace_id, None);
+            assert_eq!(task.terminal_id, None);
         }
     }
 
@@ -1193,17 +1238,17 @@ mod tests {
                         &["git", "-C", ROOT, "pull"],
                     )
                 },
-                |f| close(remove(stop(pull(f)), "deleted")),
+                |f| remove(stop(pull(f)), "deleted"),
             ),
             (
                 "stop",
-                |f| fail(pull(f), &["herdr", "pane", "send-text"]),
-                |f| close(remove(stop(pull(f)), "deleted")),
+                |f| fail(live(pull(f)), &["hc", "send"]),
+                |f| remove(stop(pull(f)), "deleted"),
             ),
             (
                 "remove",
                 |f| fail(branch_there(stop(pull(f))), &["wt", "-C", ROOT, "remove"]),
-                |f| close(remove(pull(f), "deleted")),
+                |f| remove(pull(f), "deleted"),
             ),
             (
                 "remove -D",
@@ -1214,21 +1259,23 @@ mod tests {
                     )
                 },
                 |f| {
-                    close(remove_branch_only(
+                    remove_branch_only(
                         remove_branch_only(branch_there(pull(f)), RETAINED_UNMERGED),
                         "deleted",
-                    ))
+                    )
                 },
             ),
             (
-                "close",
+                "rm",
                 |f| {
                     fail(
-                        remove(stop(pull(f)), "deleted"),
-                        &["herdr", "workspace", "close"],
+                        live(pull(f))
+                            .ok(&["hc", "send"], "")
+                            .ok(&["hc", "kill"], ""),
+                        &["hc", "rm"],
                     )
                 },
-                |f| close(pull(f)),
+                |f| remove(stop(pull(f)), "deleted"),
             ),
         ];
         for (step, first, second) in cases {

@@ -1,11 +1,11 @@
 use conductor_state::{
-    Answer, AnsweredBy, Decision, DecisionOption, Error, SchemaV1, decision_path, read_decision,
+    Answer, AnsweredBy, Decision, DecisionOption, Error, SchemaV2, decision_path, read_decision,
     read_decisions, write_decision_atomic,
 };
 
 fn decision(key: &str) -> Decision {
     Decision {
-        schema: SchemaV1,
+        schema: SchemaV2,
         key: key.into(),
         title: format!("Pick {key}"),
         about: String::new(),

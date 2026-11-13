@@ -1,5 +1,6 @@
 //! Shared serde types and storage for conductor's on-disk state under `~/.config/conductor/`.
-//! Used by the `conductor` CLI and by `conductor-deck`.
+//! Used by the `conductor` CLI, which also serves it to the conductor-deck Herdr mod as
+//! `conductor deck --json`.
 //!
 //! | Type | File |
 //! |---|---|
@@ -13,7 +14,9 @@
 //!
 //! - Every key and enum value is `snake_case`.
 //! - Top-level JSON files (`task.json`, `repo.json`, `decisions/<key>.json`) carry
-//!   `"schema": "conductor-state.v1"` ([`SchemaV1`]). Reading a file with any other marker
+//!   `"schema": "conductor-state.v2"` ([`SchemaV2`]). Files marked `conductor-state.v1`, from
+//!   before the move to the Herdr GUI, still read: their herdr pane and workspace fields are
+//!   dropped as unknown, and the next write marks them v2. Reading a file with any other marker
 //!   fails. Event lines and `config.toml` have no marker.
 //! - Optional fields are omitted when unset, never written as `null`.
 //! - Unknown fields are ignored on read, so a newer writer can add fields without breaking an
@@ -35,8 +38,9 @@
 //! - `task.json` has one writer, the `conductor` CLI, through [`write_task_atomic`]: a temp
 //!   file, `fsync`, then `rename`. `repo.json` and `decisions/<key>.json` are written the same
 //!   way, also only by the CLI, by [`write_repo_record_atomic`] and [`write_decision_atomic`].
-//! - The deck writes none of these. It computes each card's [`LiveStatus`] with [`fold`], and
-//!   answers a decision by running `conductor decision answer`.
+//! - The deck writes none of these. It reads tasks through `conductor deck --json`, which folds
+//!   each task's events with [`fold`], and answers a decision by running
+//!   `conductor decision answer`.
 //!
 //! # JSON Schema
 //!
@@ -56,7 +60,7 @@ mod schema;
 mod store;
 mod task;
 
-pub use config::{Config, DeckIcons, RepoOverrides, Settings};
+pub use config::{Config, RepoOverrides, Settings};
 pub use decision::{Answer, AnsweredBy, Decision, DecisionOption};
 pub use error::{Error, Result};
 pub use event::{CheckState, Event, EventPayload, PrState, ReviewDecision, StatusVerb};
@@ -67,7 +71,7 @@ pub use paths::{
 };
 pub use phase::Phase;
 pub use repo::RepoRecord;
-pub use schema::{SCHEMA_ID, SchemaV1, json_schema};
+pub use schema::{SCHEMA_ID, SCHEMA_ID_V1, SchemaV2, json_schema};
 pub use store::{
     EventBatch, MAX_EVENT_LINE, MAX_TEXT_FIELD, SkippedLine, append_event, read_decision,
     read_decisions, read_events, read_repo_record, read_task, task_ids, write_decision_atomic,
@@ -75,6 +79,6 @@ pub use store::{
 };
 pub use task::{Task, TaskKind};
 
-/// The committed JSON Schema (`schema/conductor-state.v1.json`) covering every type in this
+/// The committed JSON Schema (`schema/conductor-state.v2.json`) covering every type in this
 /// crate.
-pub const SCHEMA_JSON: &str = include_str!("../schema/conductor-state.v1.json");
+pub const SCHEMA_JSON: &str = include_str!("../schema/conductor-state.v2.json");

@@ -151,7 +151,7 @@ pub fn write_task_atomic(task_dir: &Path, task: &Task) -> Result<()> {
 /// # Errors
 ///
 /// [`Error::Io`] if it can't be read, and [`Error::Json`] if it doesn't parse, including a
-/// schema marker other than `conductor-state.v1`.
+/// schema marker other than `conductor-state.v2` or `conductor-state.v1`.
 pub fn read_task(task_dir: &Path) -> Result<Task> {
     let path = task_path(task_dir);
     let bytes = fs::read(&path).map_err(Error::io(&path))?;

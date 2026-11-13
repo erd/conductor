@@ -8,7 +8,7 @@
     {
       "name": "conductor",
       "source": "./",
-      "description": "Multi-agent orchestrator for Claude Code and herdr"
+      "description": "Multi-agent orchestrator for Claude Code and Herdr"
     }
   ]
 }

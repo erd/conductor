@@ -68,8 +68,8 @@ conductor task phase <id> briefed
 conductor spawn <id>
 ```
 
-It creates the worktree, opens a herdr workspace and starts the worker, moving the task to
-`working`.
+It creates the worktree and starts the worker in an hc terminal, which Herdr shows as a tab
+named after the task beside yours, and moves the task to `working`.
 
 - If it fails because worktrunk's project hooks need approval, relay its hint
   (`wt -C <repo> config approvals add`) to the user and stop. Don't approve them yourself, and
@@ -141,13 +141,13 @@ conductor decision list --open --json
   If `conductor decision list --open --task <id>` still lists it, ask the worker whether the
   user answered there; the worker records the answer itself.
 - **Needs permission or other attention:** you can't answer the prompt. Tell the user which
-  task is waiting and what for, and that the deck's `Enter` focuses its pane. A permission wake
+  task is waiting and what for, and that the deck focuses its tab. A permission wake
   carries the whole command, so quote the parts that decide whether it's safe (a write flag, a
   prod target) rather than sending the user to the pane just to read it.
 - **Went idle without reporting:** message the worker to report where it stands.
 - **Session ended, or a turn ended on an error:** tell the user. Ask before abandoning the task.
-  If the worker's pane or workspace was closed, `conductor resume <id>` reopens it and resumes
-  its session (see [9. Resuming workers](#9-resuming-workers)).
+  If the worker's tab was closed, `conductor resume <id>` restarts it and resumes its
+  session (see [9. Resuming workers](#9-resuming-workers)).
 
 ### Messaging workers
 
@@ -202,7 +202,7 @@ conductor teardown <id>
   `conductor task phase <id> working`. When it reports done again, move it to `review`,
   review the new commits, and run `conductor pr ready <id>` again.
 - **Merged:** tear it down. Teardown confirms the merge on GitHub, pulls the default branch,
-  stops the worker, removes the worktree and branch, and closes the workspace.
+  stops the worker and closes its tab, and removes the worktree and branch.
 
   ```sh
   conductor teardown <id>
@@ -238,17 +238,17 @@ When the user asks how things stand, use the `status` skill.
 
 ## 9. Resuming workers
 
-Closing your workspace row in herdr closes every worker's workspace too; the worktrees, branches
-and task state survive. When you start and `conductor status` shows tasks in `working`,
+Workers' terminals are children of yours, so closing your tab or space ends every worker, and so
+does a reboot; the worktrees, branches and task state survive. When you start and `conductor status` shows tasks in `working`,
 `needs_decision`, `review` or `awaiting_merge`, run:
 
 ```sh
-conductor resume            # every live task whose pane is gone
+conductor resume            # every live task whose worker isn't running
 conductor resume <id>...    # just these
 ```
 
-It skips a task whose pane is still open, reopens the rest in their worktrees, and resumes each
-worker's Claude session. Tell the user which tasks came back and relay any errors; a task with
+It skips a task whose worker is still running, restarts the rest in their worktrees, each in a
+new tab, and resumes each worker's Claude session. Tell the user which tasks came back and relay any errors; a task with
 no recorded session can't be resumed, so ask them whether to abandon it.
 
 ## Never

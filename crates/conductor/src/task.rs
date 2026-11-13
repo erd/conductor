@@ -10,7 +10,7 @@ use std::path::Path;
 use anyhow::{Context as _, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use conductor_state::{
-    Event, EventPayload, Phase, SchemaV1, Task, TaskKind, append_event, brief_path, read_task,
+    Event, EventPayload, Phase, SchemaV2, Task, TaskKind, append_event, brief_path, read_task,
     task_ids, write_task_atomic,
 };
 use jiff::Timestamp;
@@ -172,7 +172,7 @@ fn new(ctx: &Ctx, args: &NewArgs) -> anyhow::Result<()> {
         .with_context(|| format!("cannot write {}", brief_file.display()))?;
     let now = Timestamp::now();
     let task = Task {
-        schema: SchemaV1,
+        schema: SchemaV2,
         id: id.clone(),
         title: title.to_owned(),
         kind,
@@ -181,8 +181,7 @@ fn new(ctx: &Ctx, args: &NewArgs) -> anyhow::Result<()> {
         worktree_path: None,
         session_name: None,
         claude_session_id: None,
-        herdr_workspace_id: None,
-        herdr_pane_id: None,
+        terminal_id: None,
         pr_url: None,
         created_at: now,
         updated_at: now,
@@ -260,8 +259,7 @@ fn render_show(task: &Task, task_dir: &Path) -> String {
         ("worktree", task.worktree_path.as_deref().map(path)),
         ("session", task.session_name.clone()),
         ("claude_session", task.claude_session_id.clone()),
-        ("herdr_workspace", task.herdr_workspace_id.clone()),
-        ("herdr_pane", task.herdr_pane_id.clone()),
+        ("terminal", task.terminal_id.clone()),
         ("pr", task.pr_url.clone()),
         ("created", Some(task.created_at.to_string())),
         ("updated", Some(task.updated_at.to_string())),

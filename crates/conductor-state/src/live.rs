@@ -1,12 +1,12 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::mem;
 
 use jiff::Timestamp;
 
 use crate::{CheckState, Event, EventPayload, PrState, ReviewDecision, StatusVerb};
 
-/// A task's live status, folded from its events. The CLI and the deck both compute it with
-/// [`fold`] or [`LiveStatus::apply`], so they always agree on what a card shows.
+/// A task's live status, folded from its events with [`fold`] or [`LiveStatus::apply`].
+/// `conductor status` and the deck's feed (`conductor deck --json`) both build on it.
 ///
 /// This is separate from the task's [`Phase`](crate::Phase), which lives in `task.json` and
 /// changes only on purpose.
@@ -21,16 +21,16 @@ pub struct LiveStatus {
     pub status: Option<LastStatus>,
     /// The latest `pr_url` from a `status` event.
     pub pr_url: Option<String>,
-    /// Keys of decisions opened and not yet answered.
-    pub open_decisions: BTreeSet<String>,
+    /// Decisions opened and not yet answered: each key, and when it was opened.
+    pub open_decisions: BTreeMap<String, Timestamp>,
     /// The latest `pr` event.
     pub pr: Option<PrStatus>,
     /// From the latest `session_start`.
     pub session_id: Option<String>,
-    /// From the latest `session_start`.
-    pub herdr_pane_id: Option<String>,
-    /// From the latest `session_start`.
-    pub herdr_workspace_id: Option<String>,
+    /// The hc terminal of the latest `session_start`.
+    pub terminal_id: Option<String>,
+    /// When the latest `phase` event moved the task.
+    pub phase_since: Option<Timestamp>,
 }
 
 /// What the worker's Claude session is doing.
@@ -62,6 +62,8 @@ pub struct CurrentTool {
 pub struct LastStatus {
     pub verb: StatusVerb,
     pub text: Option<String>,
+    /// The PR this report named, if any.
+    pub pr_url: Option<String>,
     pub ts: Timestamp,
 }
 
@@ -91,13 +93,11 @@ impl LiveStatus {
         match &event.payload {
             EventPayload::SessionStart {
                 source,
-                herdr_pane_id,
-                herdr_workspace_id,
+                terminal_id,
                 ..
             } => {
                 self.session_id.clone_from(&event.session_id);
-                self.herdr_pane_id.clone_from(herdr_pane_id);
-                self.herdr_workspace_id.clone_from(herdr_workspace_id);
+                self.terminal_id.clone_from(terminal_id);
                 // A new session is the only way out of `Exited`.
                 if self.exited() {
                     self.activity = Activity::NotStarted;
@@ -161,6 +161,7 @@ impl LiveStatus {
                 self.status = Some(LastStatus {
                     verb: *verb,
                     text: text.clone(),
+                    pr_url: pr_url.clone(),
                     ts,
                 });
                 if pr_url.is_some() {
@@ -168,7 +169,7 @@ impl LiveStatus {
                 }
             }
             EventPayload::DecisionOpen { key } => {
-                self.open_decisions.insert(key.clone());
+                self.open_decisions.insert(key.clone(), ts);
             }
             EventPayload::DecisionAnswered { key } => {
                 self.open_decisions.remove(key);
@@ -185,7 +186,8 @@ impl LiveStatus {
                     ts,
                 });
             }
-            EventPayload::Phase { .. } | EventPayload::Unknown { .. } => {}
+            EventPayload::Phase { .. } => self.phase_since = Some(ts),
+            EventPayload::Unknown { .. } => {}
         }
     }
 

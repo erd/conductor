@@ -14,8 +14,7 @@
     "session_id": "abc123",
     "kind": "session_start",
     "source": "startup",
-    "herdr_pane_id": "p-1",
-    "herdr_workspace_id": "w-1",
+    "terminal_id": "t1",
     "transcript_path": "/Users/me/.claude/projects/-src-my-repo/00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl"
   }
 }

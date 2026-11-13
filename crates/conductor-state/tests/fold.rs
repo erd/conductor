@@ -1,7 +1,7 @@
 //! Folds each fixture under `tests/fixtures/` and checks the resulting [`LiveStatus`]. The
 //! deck reuses these fixtures, so each one is a realistic event log for one card state.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -28,14 +28,13 @@ fn ts(time: &str) -> Timestamp {
     format!("2026-10-14T{time}Z").parse().unwrap()
 }
 
-/// The status every fixture shares after its `session_start` (session `s1` in pane `p1`).
+/// The status every fixture shares after its `session_start` (session `s1` in terminal `t1`).
 fn base(activity: Activity, since: &str) -> LiveStatus {
     LiveStatus {
         activity,
         since: Some(ts(since)),
         session_id: Some("s1".into()),
-        herdr_pane_id: Some("p1".into()),
-        herdr_workspace_id: Some("w1".into()),
+        terminal_id: Some("t1".into()),
         ..LiveStatus::default()
     }
 }
@@ -109,6 +108,7 @@ fn idle() {
         status: Some(LastStatus {
             verb: StatusVerb::Done,
             text: Some("Draft PR open".into()),
+            pr_url: Some(PR_URL.into()),
             ts: ts("12:05:00"),
         }),
         pr_url: Some(PR_URL.into()),
@@ -143,8 +143,7 @@ fn resumed() {
         activity: Activity::Idle { error: None },
         since: Some(ts("13:00:00")),
         session_id: Some("s2".into()),
-        herdr_pane_id: Some("p2".into()),
-        herdr_workspace_id: Some("w2".into()),
+        terminal_id: Some("t2".into()),
         ..LiveStatus::default()
     };
     assert_eq!(status, expected);
@@ -160,10 +159,11 @@ fn compact_mid_turn() {
 fn decisions() {
     let status = fold(&events("decisions.jsonl"));
     let expected = LiveStatus {
-        open_decisions: BTreeSet::from(["auth-flow".into()]),
+        open_decisions: BTreeMap::from([("auth-flow".into(), ts("12:02:01"))]),
         status: Some(LastStatus {
             verb: StatusVerb::Blocked,
             text: Some("Waiting on two decisions".into()),
+            pr_url: None,
             ts: ts("12:02:02"),
         }),
         ..base(Activity::Idle { error: None }, "12:02:03")
@@ -218,6 +218,8 @@ fn pr_lifecycle() {
     let status = fold(&events);
     assert_eq!(status.pr_url.as_deref(), Some(PR_URL));
     assert_eq!(status.activity, THINKING);
+    assert_eq!(status.phase_since, Some(ts("12:08:00")));
+    assert_eq!(fold(&events[..4]).phase_since, None);
 }
 
 #[test]

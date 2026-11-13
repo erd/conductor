@@ -1,6 +1,7 @@
 mod context;
 mod decision;
 mod deck;
+mod hc;
 mod hook;
 mod init;
 mod log;
@@ -31,7 +32,7 @@ use crate::task::TaskCommand;
 use crate::teardown::TeardownArgs;
 use crate::watch::WatchArgs;
 
-/// Multi-agent orchestrator for Claude Code and herdr.
+/// Multi-agent orchestrator for Claude Code and Herdr.
 ///
 /// Works from anywhere inside a repo's main checkout or one of its worktrees; state lives in
 /// `$CONDUCTOR_HOME`, else `~/.config/conductor`.
@@ -89,18 +90,20 @@ enum Command {
         #[command(subcommand)]
         command: PrCommand,
     },
-    /// Start a briefed task's worker: create its worktree, open a herdr workspace for it, and run
-    /// its Claude session there.
+    /// Start a briefed task's worker: create its worktree and run its Claude session there in an
+    /// hc terminal, shown as a tab named after the task in the conductor's Herdr space.
     ///
-    /// Moves the task to `working`, recording the branch, worktree, session, workspace and pane
-    /// in `task.json`; if a step fails, moves it to `failed` instead. Run from the repo.
+    /// The worker's terminal is a child of the one spawn runs from, normally the conductor's, and
+    /// ends with it. Moves the task to `working`, recording the branch, worktree, session and
+    /// terminal in `task.json`; if a step fails, moves it to `failed` instead. Run from the repo.
     Spawn(SpawnArgs),
-    /// Remove a finished task's worker, worktree, branch and workspace.
+    /// Remove a finished task's worker, worktree and branch.
     ///
     /// A ship task's PR must be merged on GitHub. First pulls the default branch in the main
     /// checkout (or fetches, if it isn't checked out there and clean), so worktrunk can see the
-    /// branch merged. Then stops the worker, removes the worktree and branch, closes the herdr
-    /// workspace, and moves the task to `torn_down`, or `abandoned` with `--abandon`. If a step
+    /// branch merged. Then asks the worker to `/exit` and removes its terminal, which closes its
+    /// tab, removes the worktree and branch, and moves the task to `torn_down`, or `abandoned`
+    /// with `--abandon`. If a step
     /// fails, rerunning continues from it. Records the PR's state as `gh pr view` reports it, so
     /// `conductor status --all` shows it merged or closed. Run from the repo.
     Teardown(TeardownArgs),
@@ -113,15 +116,25 @@ enum Command {
     /// at the end of each log. Exits 0 after `--max-wait`, or at once if another watcher holds
     /// the repo's `watch.lock`.
     Watch(WatchArgs),
-    /// Reopen the herdr workspace and Claude session of each live task whose pane is gone.
+    /// Restart the worker of each live task whose terminal is gone, resuming its Claude session.
     ///
-    /// For when closing the conductor's workspace row closed the workers' workspaces too. Covers
+    /// For when closing the conductor's tab, its space or the app's core ended the workers. Covers
     /// tasks in `working`, `needs_decision`, `review` or `awaiting_merge`, or just the ones named.
-    /// Skips a task whose herdr pane is still open. Otherwise opens its worktree in a new herdr
-    /// workspace, runs `claude --resume` there with the session id from its latest
-    /// `session_start` event, and records the workspace and pane in `task.json`. Run from the
-    /// repo, after `conductor start`.
+    /// Skips a task whose worker is still running in its terminal. Otherwise removes what's left
+    /// of that terminal, runs `claude --resume` in a new one in the task's worktree with the
+    /// session id from its latest `session_start` event, and records the terminal in
+    /// `task.json`. Run from the repo, after `conductor start`.
     Resume(ResumeArgs),
+    /// Print the conductor-deck Herdr mod's feed: the repo, and every task's phase, activity,
+    /// latest report, open decisions, PR and terminal, as one JSON document.
+    ///
+    /// Includes torn-down and abandoned tasks. A task that can't be read appears with its error.
+    /// Run from the repo; the deck runs it from its space's folder.
+    Deck {
+        /// Print JSON, the only format so far.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Args)]
@@ -161,6 +174,7 @@ fn run(command: &Command) -> anyhow::Result<ExitCode> {
         Command::Teardown(args) => teardown::run(args)?,
         Command::Watch(args) => return watch::run(args),
         Command::Resume(args) => resume::run(args)?,
+        Command::Deck { json } => deck::run(*json)?,
     }
     Ok(ExitCode::SUCCESS)
 }

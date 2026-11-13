@@ -79,7 +79,7 @@ impl Fixture {
     }
 
     /// `sh conductor-hook.sh <arg>` with the conductor binary as `CONDUCTOR_BIN`, this
-    /// fixture's homes, and no conductor or herdr session variables.
+    /// fixture's homes, and no conductor or hc session variables.
     fn shim(&self, arg: &str) -> Command {
         let mut command = Command::new("sh");
         command
@@ -92,8 +92,10 @@ impl Fixture {
             .env_remove("CONDUCTOR_TASK_ID")
             .env_remove("CONDUCTOR_ROLE")
             .env_remove("CONDUCTOR_REPO_ID")
-            .env_remove("HERDR_PANE_ID")
-            .env_remove("HERDR_WORKSPACE_ID")
+            .env_remove("HC_TERMINAL_ID")
+            .env_remove("HC_TERMINAL_SOCKET")
+            .env_remove("HC_SCOPE")
+            .env_remove("HC_SESSION")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

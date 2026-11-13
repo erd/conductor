@@ -1,15 +1,17 @@
 # conductor
 
-Multi-agent orchestrator for Claude Code and herdr
+Multi-agent orchestrator for Claude Code and Herdr
 
-A conductor Claude session briefs tasks and runs each one in a worker session in its own worktree
-and herdr workspace. The workers' hooks record what they're doing, and the conductor is woken
-when one needs it. See [docs/design.md](docs/design.md).
+A conductor Claude session briefs tasks and runs each one in a worker session in its own worktree,
+shown as a tab beside the conductor in [Herdr](https://herdr.dev). The workers' hooks record what
+they're doing, and the conductor is woken when one needs it. See [docs/design.md](docs/design.md).
 
 ## Requirements
 
-- [herdr](https://herdr.dev) 0.9.4 or later. Run conductor inside it. The
-  [conductor-deck](https://github.com/erd/conductor-deck) herdr plugin is optional; when it's
+- The [Herdr](https://herdr.dev) app (Herdr.app 0.1.15 or later, with herdr-core 0.1.20 or
+  later), with `hc` and `herdr-app` on your `PATH` (Herdr installs them in `~/.local/bin`). Run
+  the conductor in a Herdr terminal. The herdr TUI (`herdr` 0.9.x) is no longer supported. The
+  [conductor-deck](https://github.com/erd/conductor-deck) Herdr mod is optional; when it's
   installed, the deck opens beside the conductor.
 - [worktrunk](https://github.com/max-sixty/worktrunk) (`wt`), which creates the workers'
   worktrees.
@@ -47,21 +49,30 @@ its path. The plugin also provides three skills:
 
 ## Usage
 
-From a repo's main checkout (or any worktree of it), inside herdr:
+From a repo's main checkout (or any worktree of it), in a Herdr terminal:
 
 ```sh
 conductor start
 ```
 
 This records the repo in `~/.config/conductor` and starts the conductor's Claude session.
-`conductor --help` lists the other commands.
+Each worker it spawns runs in an hc terminal of its own, shown as a tab named after its task in
+the conductor's space. `conductor deck --json` prints the feed the deck reads. `conductor --help`
+lists the other commands.
 
-Closing the conductor's workspace in herdr also closes every worker's workspace. The worktrees
-and task state survive: run `conductor start` again, then `conductor resume` to reopen each
-worker in its worktree and resume its Claude session.
+Workers are children of the conductor's terminal, so closing the conductor's tab or space ends
+them, and so does a reboot. The worktrees and task state survive: run `conductor start` again,
+then `conductor resume` to restart each worker in its worktree and resume its Claude session.
 
 [`docs/smoke-test.md`](docs/smoke-test.md) is a manual end-to-end checklist for the whole
 system.
+
+### Upgrading from the herdr TUI
+
+State files are now `conductor-state.v2`. v1 files still read, but they lose their herdr pane and
+workspace ids. Before upgrading, tear down or finish the tasks that are running under the herdr
+TUI. Otherwise close their TUI panes yourself and run `conductor resume` from the Herdr app. The
+`deck_width` and `deck_icons` settings are gone; a `config.toml` that sets them still loads.
 
 ## Development
 
