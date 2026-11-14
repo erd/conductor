@@ -43,7 +43,7 @@ pub fn run(args: &SpawnArgs) -> anyhow::Result<()> {
         &ctx,
         args,
         &System,
-        &Tools::default(),
+        &Tools::from_env(),
         hc::TAB_TIMEOUT,
         &mut std::io::stdout().lock(),
         &mut std::io::stderr().lock(),
@@ -99,7 +99,7 @@ fn spawn(
     let space = conductor_space(ctx)?;
     let session = ctx.worker_session(id);
     let brief = brief_path(&task_dir);
-    let worker = worker_command(ctx, id, &session, &Launch::Brief(&brief));
+    let worker = worker_command(ctx, tools, id, &session, &Launch::Brief(&brief));
     let wt = wt_switch(tools, root, &branch, !branch_exists);
 
     if args.dry_run {
@@ -251,16 +251,25 @@ pub enum Launch<'a> {
 }
 
 /// The program and arguments that start the worker. `hc run` runs them directly, with no shell
-/// in between. They go through `env` to set the variables the worker's hooks and `conductor`
-/// calls need.
-pub fn worker_command(ctx: &Ctx, id: &str, session: &str, launch: &Launch) -> Vec<String> {
-    let mut words = vec![
-        "env".to_owned(),
+/// in between, in hc's environment. They go through `env` to set the variables the worker's
+/// hooks and `conductor` calls need, and `PATH` if given (see [`Tools::path`]).
+pub fn worker_command(
+    ctx: &Ctx,
+    tools: &Tools,
+    id: &str,
+    session: &str,
+    launch: &Launch,
+) -> Vec<String> {
+    let mut words = vec!["env".to_owned()];
+    if let Some(path) = &tools.path {
+        words.push(format!("PATH={path}"));
+    }
+    words.extend([
         format!("CONDUCTOR_TASK_ID={id}"),
         format!("CONDUCTOR_REPO_ID={}", ctx.repo.id),
         format!("CONDUCTOR_HOME={}", ctx.home.root().display()),
         "claude".to_owned(),
-    ];
+    ]);
     if let Launch::Resume(session_id) = launch {
         words.extend(["--resume".to_owned(), (*session_id).to_owned()]);
     }
@@ -529,6 +538,22 @@ mod tests {
         let worker = shell::join(&argvs[2][10..]).replace(&fx.home(), "<home>");
         insta::assert_snapshot!("worker_command", worker);
         insta::assert_snapshot!("spawned_output", run.out);
+    }
+
+    #[test]
+    fn worker_command_passes_path_on() {
+        let fx = Fixture::new(Phase::Briefed);
+        let tools = Tools {
+            path: Some("/home/me/.cargo/bin:/usr/bin".to_owned()),
+            ..Tools::default()
+        };
+        let words = worker_command(&fx.ctx, &tools, ID, "s", &Launch::Resume("abc"));
+        assert_eq!(words[..2], ["env", "PATH=/home/me/.cargo/bin:/usr/bin"]);
+        assert!(
+            worker_command(&fx.ctx, &Tools::default(), ID, "s", &Launch::Resume("abc"))
+                .iter()
+                .all(|w| !w.starts_with("PATH="))
+        );
     }
 
     #[test]

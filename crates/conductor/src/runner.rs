@@ -163,6 +163,10 @@ pub struct Tools {
     pub herdr_app: String,
     pub git: String,
     pub gh: String,
+    /// The `PATH` to give the programs hc runs. hc starts them in its own environment, not the
+    /// caller's, so without this a worker can't find `conductor` or anything else on the
+    /// user's `PATH`.
+    pub path: Option<String>,
 }
 
 impl Default for Tools {
@@ -175,6 +179,17 @@ impl Default for Tools {
             herdr_app: "herdr-app".to_owned(),
             git: "git".to_owned(),
             gh: "gh".to_owned(),
+            path: None,
+        }
+    }
+}
+
+impl Tools {
+    /// The defaults, passing this process's `PATH` on to the programs hc runs.
+    pub fn from_env() -> Self {
+        Self {
+            path: std::env::var("PATH").ok(),
+            ..Self::default()
         }
     }
 }

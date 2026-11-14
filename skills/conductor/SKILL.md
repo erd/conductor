@@ -239,8 +239,9 @@ When the user asks how things stand, use the `status` skill.
 ## 9. Resuming workers
 
 Workers' terminals are children of yours, so closing your tab or space ends every worker, and so
-does a reboot; the worktrees, branches and task state survive. When you start and `conductor status` shows tasks in `working`,
-`needs_decision`, `review` or `awaiting_merge`, run:
+does a reboot; the worktrees, branches and task state survive. Their activity then reads
+`exited`, even for a worker that had nothing left to do. When you start and `conductor status`
+shows tasks in `working`, `needs_decision`, `review` or `awaiting_merge`, run:
 
 ```sh
 conductor resume            # every live task whose worker isn't running
@@ -248,8 +249,9 @@ conductor resume <id>...    # just these
 ```
 
 It skips a task whose worker is still running, restarts the rest in their worktrees, each in a
-new tab, and resumes each worker's Claude session. Tell the user which tasks came back and relay any errors; a task with
-no recorded session can't be resumed, so ask them whether to abandon it.
+new tab, and resumes each worker's Claude session. Resume them all, so each task has a worker
+for fix-ups. Tell the user which tasks came back and relay any errors; a task with no recorded
+session can't be resumed, so ask them whether to abandon it.
 
 ## Never
 

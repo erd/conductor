@@ -244,13 +244,16 @@ stateDiagram-v2
    1. runs `wt -C <repo> switch --create <branch> --no-cd --format=json` and
       records `path` and `branch`;
    2. runs `hc run --bg --json --cwd <path> --label herdr.space=<space>
-      --no-notify -- env CONDUCTOR_TASK_ID=<task> CONDUCTOR_REPO_ID=<repo-id>
-      CONDUCTOR_HOME=… claude -n <repo>-<task> --permission-mode auto 'Read
-      your brief at <path> and follow the conductor worker skill.'`, adding
-      `--model`/`--effort` when config sets them, and records the terminal's
-      address (`t…`). `<space>` is the conductor's Herdr space from
-      `repo.json`; Herdr shows any hc terminal labelled with it as a new tab in
-      that space. hc runs the argv directly, with no shell in between. The
+      --no-notify -- env PATH=… CONDUCTOR_TASK_ID=<task>
+      CONDUCTOR_REPO_ID=<repo-id> CONDUCTOR_HOME=… claude -n <repo>-<task>
+      --permission-mode auto 'Read your brief at <path> and follow the
+      conductor worker skill.'`, adding `--model`/`--effort` when config sets
+      them, and records the terminal's address (`t…`). `<space>` is the
+      conductor's Herdr space from `repo.json`; Herdr shows any hc terminal
+      labelled with it as a new tab in that space. hc runs the argv directly,
+      with no shell in between, in the core's environment rather than the
+      caller's, so spawn passes its own `PATH` on: without it the worker
+      can't find `conductor` (in `~/.cargo/bin`). The
       terminal is a child of the one spawn runs from, normally the
       conductor's, so it ends when that one does. `--no-notify` keeps hc from
       typing notes about the worker into the conductor's session: the hooks
