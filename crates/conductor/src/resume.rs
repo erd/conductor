@@ -49,7 +49,7 @@ pub fn run(args: &ResumeArgs) -> anyhow::Result<()> {
         &ctx,
         args,
         &System,
-        &Tools::default(),
+        &Tools::from_env(),
         hc::TAB_TIMEOUT,
         &mut std::io::stdout().lock(),
         &mut std::io::stderr().lock(),
@@ -168,7 +168,13 @@ impl Resumer<'_> {
             .session_name
             .clone()
             .unwrap_or_else(|| self.ctx.worker_session(&id));
-        let worker = worker_command(self.ctx, &id, &name, &Launch::Resume(&session_id));
+        let worker = worker_command(
+            self.ctx,
+            self.tools,
+            &id,
+            &name,
+            &Launch::Resume(&session_id),
+        );
         let run = hc::run(self.tools, &worktree, self.space.as_deref(), &worker);
 
         if self.dry_run {

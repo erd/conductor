@@ -119,8 +119,8 @@ Close everything:
 
 - [ ] In Herdr, close the conductor's tab. The worker's terminal is its child, so the
       worker's tab closes with it.
-- [ ] `conductor status` still lists the task as `working`. Its activity may lag, since the
-      session ended without a clean exit.
+- [ ] `conductor status` still lists the task in its phase, with activity `exited`: the
+      worker's session-end hook runs as its terminal is killed.
 - [ ] `ls .worktrees/` and `git branch` show the worktree and branch still there.
 
 Bring it back:

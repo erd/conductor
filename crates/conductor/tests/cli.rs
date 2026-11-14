@@ -760,12 +760,13 @@ fn spawn_dry_run_prints_commands_and_changes_nothing() {
             root.display()
         )
     );
-    // No space recorded yet, so no label.
+    // No space recorded yet, so no label. hc runs the worker in its own environment, so spawn
+    // passes its PATH on.
     assert!(
-        lines[1]
-            .starts_with("hc run --bg --json --cwd '<path>' --no-notify -- env CONDUCTOR_TASK_ID="),
+        lines[1].starts_with("hc run --bg --json --cwd '<path>' --no-notify -- env PATH="),
         "{out}"
     );
+    assert!(lines[1].contains(" CONDUCTOR_TASK_ID="), "{out}");
     assert!(
         lines[1].contains(" claude -n my-repo-fix-login-01 "),
         "{out}"
