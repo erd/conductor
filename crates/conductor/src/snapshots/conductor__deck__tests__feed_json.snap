@@ -1,0 +1,105 @@
+---
+source: crates/conductor/src/deck.rs
+expression: json
+---
+{
+  "repo": {
+    "id": "web-3f9a1c",
+    "root": "/src/web",
+    "dir": "<home>/web-3f9a1c",
+    "terminal_id": "t11",
+    "space_id": "sp1"
+  },
+  "tasks": [
+    {
+      "id": "audit-deps-01",
+      "title": "Audit outdated dependencies",
+      "kind": "scout",
+      "phase": "torn_down",
+      "activity": "exited",
+      "detail": "other",
+      "since": "2026-10-12T16:58:00Z",
+      "report": {
+        "verb": "done",
+        "text": "report.md written",
+        "ts": "2026-10-12T16:40:00Z"
+      },
+      "decisions": [],
+      "branch": "conductor/audit-deps-01",
+      "terminal_id": "t0",
+      "updated_at": "2026-10-12T17:00:00Z"
+    },
+    {
+      "id": "add-docs-02",
+      "title": "Document the deploy process",
+      "kind": "ship",
+      "phase": "awaiting_merge",
+      "phase_since": "2026-10-14T09:20:00Z",
+      "activity": "idle",
+      "since": "2026-10-14T09:15:00Z",
+      "report": {
+        "verb": "done",
+        "text": "Draft PR open",
+        "pr_url": "https://github.com/erd/web/pull/42",
+        "ts": "2026-10-14T09:14:00Z"
+      },
+      "decisions": [],
+      "branch": "conductor/add-docs-02",
+      "pr_url": "https://github.com/erd/web/pull/42",
+      "pr": {
+        "state": "open",
+        "checks": "pass",
+        "review": "approved"
+      },
+      "terminal_id": "t3",
+      "updated_at": "2026-10-14T09:20:00Z"
+    },
+    {
+      "id": "fix-login-07",
+      "title": "Fix login redirect loop",
+      "kind": "ship",
+      "phase": "working",
+      "activity": "working",
+      "detail": "Edit src/login.rs",
+      "since": "2026-10-14T12:00:01Z",
+      "decisions": [],
+      "branch": "conductor/fix-login-07",
+      "terminal_id": "t1",
+      "updated_at": "2026-10-14T12:00:00Z"
+    },
+    {
+      "id": "pick-db-03",
+      "title": "Pick a database for the analytics pipeline and migrate the existing tables",
+      "kind": "ship",
+      "phase": "needs_decision",
+      "phase_since": "2026-10-14T12:15:00Z",
+      "activity": "needs_permission",
+      "detail": "Claude needs your permission to use Bash",
+      "since": "2026-10-14T12:27:31Z",
+      "decisions": [
+        {
+          "key": "database",
+          "title": "Postgres or ClickHouse?",
+          "opened_at": "2026-10-14T12:15:00Z"
+        }
+      ],
+      "branch": "conductor/pick-db-03",
+      "terminal_id": "t2",
+      "updated_at": "2026-10-14T12:15:00Z"
+    },
+    {
+      "id": "rate-limit-08",
+      "title": "Rate-limit the signup endpoint",
+      "kind": "ship",
+      "phase": "briefed",
+      "activity": "not_started",
+      "since": "2026-10-14T12:25:00Z",
+      "decisions": [],
+      "updated_at": "2026-10-14T12:25:00Z"
+    },
+    {
+      "id": "broken-09",
+      "error": "<home>/web-3f9a1c/tasks/broken-09/task.json: EOF while parsing an object at line 1 column 1"
+    }
+  ]
+}

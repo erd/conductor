@@ -1,9 +1,10 @@
+use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use conductor_state::{
-    Phase, RepoRecord, SchemaV1, Task, TaskKind, read_repo_record, repo_record_path, resolve_repo,
+    Phase, RepoRecord, SchemaV2, Task, TaskKind, read_repo_record, repo_record_path, resolve_repo,
     write_task_atomic,
 };
 use tempfile::TempDir;
@@ -36,11 +37,20 @@ struct Fixture {
     tmp: TempDir,
 }
 
-const HERDR_STUB: &str = r#"#!/bin/sh
-echo "$*" >> "$(dirname "$0")/herdr.log"
-case "$1 $2" in
-"plugin list") echo '{"result":{"plugins":[{"plugin_id":"conductor-deck","enabled":true,"panes":[{"id":"deck","title":"conductor"}]}]}}' ;;
-"pane list") echo '{"result":{"panes":[{"pane_id":"p1"}]}}' ;;
+/// A stub `hc` that logs its arguments and reports every terminal as live in space `sp1`.
+const HC_STUB: &str = r#"#!/bin/sh
+echo "hc $*" >> "$(dirname "$0")/../tools.log"
+case "$1" in
+get) echo '{"address":"t11","state":"live","argv":["/bin/zsh","-l"],"labels":{"herdr.space":"sp1"}}' ;;
+esac
+"#;
+
+/// A stub `herdr-app` that logs its arguments and shows terminal `t11` in pane `p11`.
+const HERDR_APP_STUB: &str = r#"#!/bin/sh
+echo "herdr-app $*" >> "$(dirname "$0")/../tools.log"
+case "$1" in
+ls) echo '{"spaces":[{"id":"sp1","tabs":[{"id":"tb1","terminals":[{"terminal":"t11","pane":"p11"}]}]}]}' ;;
+do) echo '{"ok":true}' ;;
 esac
 "#;
 
@@ -57,21 +67,37 @@ impl Fixture {
             &["worktree", "add", "-q", ".worktrees/task", "-b", "task"],
         );
         std::fs::create_dir_all(fixture.home()).unwrap();
-        let herdr = fixture.herdr();
-        std::fs::write(&herdr, HERDR_STUB).unwrap();
-        std::fs::set_permissions(&herdr, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let bin = fixture.tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for (name, stub) in [("hc", HC_STUB), ("herdr-app", HERDR_APP_STUB)] {
+            let path = bin.join(name);
+            std::fs::write(&path, stub).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let deck = fixture.app_home().join("mods/conductor-deck");
+        std::fs::create_dir_all(&deck).unwrap();
+        std::fs::write(deck.join("main.js"), "").unwrap();
         fixture
     }
 
-    /// A stub `herdr` that logs its arguments to `herdr.log` and reports the deck plugin as
-    /// installed with no pane open.
-    fn herdr(&self) -> PathBuf {
-        self.tmp.path().join("herdr")
+    /// A Herdr home with the deck installed.
+    fn app_home(&self) -> PathBuf {
+        self.tmp.path().join("herdr-app")
     }
 
-    /// The `herdr` stub's calls, one line of arguments each.
-    fn herdr_calls(&self) -> Vec<String> {
-        std::fs::read_to_string(self.tmp.path().join("herdr.log"))
+    /// `PATH` with the `hc` and `herdr-app` stubs first.
+    fn path(&self) -> String {
+        let bin = self.tmp.path().join("bin");
+        format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    }
+
+    /// The stubs' calls, one line each: the tool, then its arguments.
+    fn tool_calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.tmp.path().join("tools.log"))
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
@@ -95,21 +121,24 @@ impl Fixture {
         self.home().join("repos").join(id)
     }
 
-    /// `conductor <args>` run in `dir` with this fixture's home, the `herdr` stub, and no herdr
-    /// or conductor session variables, which are set when the tests run inside a conductor
-    /// worker.
+    /// `conductor <args>` run in `dir` with this fixture's homes, the `hc` and `herdr-app` stubs,
+    /// and no hc or conductor session variables, which are set when the tests run inside a Herdr
+    /// terminal or a conductor worker.
     fn command(&self, dir: &Path, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_conductor"));
         command
             .args(args)
             .current_dir(dir)
             .env("CONDUCTOR_HOME", self.home())
-            .env("HERDR_BIN_PATH", self.herdr())
+            .env("PATH", self.path())
+            .env("HERDR_APP_HOME", self.app_home())
             .env_remove("CONDUCTOR_TASK_ID")
             .env_remove("CONDUCTOR_ROLE")
             .env_remove("CONDUCTOR_REPO_ID")
-            .env_remove("HERDR_PANE_ID")
-            .env_remove("HERDR_WORKSPACE_ID");
+            .env_remove("HC_TERMINAL_ID")
+            .env_remove("HC_TERMINAL_SOCKET")
+            .env_remove("HC_SCOPE")
+            .env_remove("HC_SESSION");
         command
     }
 
@@ -158,12 +187,12 @@ fn init_same_record_from_main_checkout_and_worktree() {
     assert_eq!(
         record,
         RepoRecord {
-            schema: conductor_state::SchemaV1,
+            schema: conductor_state::SchemaV2,
             repo_id: conductor_state::repo_id_for_root(&root),
             repo_root: root,
             conductor_session: "conductor-my-repo".into(),
-            herdr_workspace_id: None,
-            herdr_pane_id: None,
+            terminal_id: None,
+            space_id: None,
         }
     );
 
@@ -174,25 +203,25 @@ fn init_same_record_from_main_checkout_and_worktree() {
 }
 
 #[test]
-fn init_keeps_herdr_workspace_outside_herdr() {
+fn init_keeps_the_recorded_terminal_and_space() {
     let fx = Fixture::new();
+    assert_success(&fx.run(&fx.repo(), &["init"]));
+    let path = repo_record_path(&fx.repo_dir());
+    let mut record = read_repo_record(&fx.repo_dir()).unwrap().unwrap();
+    record.terminal_id = Some("t11".into());
+    record.space_id = Some("sp1".into());
+    conductor_state::write_repo_record_atomic(&fx.repo_dir(), &record).unwrap();
+
+    // Even from a Herdr terminal: only the conductor's SessionStart hook sets them.
     let output = fx
-        .command(&fx.repo(), &["init"])
-        .env("HERDR_WORKSPACE_ID", "w7")
+        .command(&fx.worktree(), &["init"])
+        .env("HC_TERMINAL_ID", "t5")
         .output()
         .unwrap();
     assert_success(&output);
-    let workspace = || {
-        read_repo_record(&fx.repo_dir())
-            .unwrap()
-            .unwrap()
-            .herdr_workspace_id
-    };
-    assert_eq!(workspace().as_deref(), Some("w7"));
-
-    // Run again with no herdr in the environment: the recorded workspace stays.
-    assert_success(&fx.run(&fx.worktree(), &["init"]));
-    assert_eq!(workspace().as_deref(), Some("w7"));
+    assert_eq!(read_repo_record(&fx.repo_dir()).unwrap().unwrap(), record);
+    assert!(path.exists());
+    assert_eq!(fx.tool_calls(), Vec::<String>::new());
 }
 
 #[test]
@@ -213,7 +242,7 @@ fn start_dry_run_prints_command_and_writes_nothing() {
         )
     );
     assert!(
-        stderr(&output).contains("not running inside herdr"),
+        stderr(&output).contains("not running in a Herdr terminal"),
         "{}",
         stderr(&output)
     );
@@ -225,7 +254,7 @@ fn start_dry_run_in_herdr_has_no_warning() {
     let fx = Fixture::new();
     let output = fx
         .command(&fx.repo(), &["start", "--dry-run"])
-        .env("HERDR_PANE_ID", "p1")
+        .env("HC_TERMINAL_ID", "t11")
         .output()
         .unwrap();
     assert_success(&output);
@@ -277,7 +306,7 @@ fn report_done_pr_shows_in_status_json() {
     std::fs::create_dir_all(&task_dir).unwrap();
     let ts = "2026-10-14T12:00:00Z".parse().unwrap();
     let task = Task {
-        schema: SchemaV1,
+        schema: SchemaV2,
         id: "fix-login-07".into(),
         title: "Fix login".into(),
         kind: TaskKind::Ship,
@@ -286,8 +315,7 @@ fn report_done_pr_shows_in_status_json() {
         worktree_path: None,
         session_name: None,
         claude_session_id: None,
-        herdr_workspace_id: None,
-        herdr_pane_id: None,
+        terminal_id: None,
         pr_url: None,
         created_at: ts,
         updated_at: ts,
@@ -332,7 +360,7 @@ fn outside_a_git_repo_fails() {
 fn bad_config_fails_and_names_the_file() {
     let fx = Fixture::new();
     let config = fx.home().join("config.toml");
-    std::fs::write(&config, "deck_width = \"wide\"\n").unwrap();
+    std::fs::write(&config, "branch_prefix = 3\n").unwrap();
     let output = fx.run(&fx.repo(), &["status"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
@@ -348,7 +376,7 @@ fn resume_with_no_live_tasks_does_nothing() {
     let output = fx.run(&fx.repo(), &["resume"]);
     assert_success(&output);
     assert_eq!(stdout(&output), "no tasks to resume\n");
-    assert_eq!(fx.herdr_calls(), Vec::<String>::new());
+    assert_eq!(fx.tool_calls(), Vec::<String>::new());
 }
 
 #[test]
@@ -358,7 +386,7 @@ fn resume_without_a_session_fails_and_names_the_task() {
     std::fs::create_dir_all(&task_dir).unwrap();
     let ts = "2026-10-14T12:00:00Z".parse().unwrap();
     let task = Task {
-        schema: SchemaV1,
+        schema: SchemaV2,
         id: "fix-login-07".into(),
         title: "Fix login".into(),
         kind: TaskKind::Ship,
@@ -367,8 +395,7 @@ fn resume_without_a_session_fails_and_names_the_task() {
         worktree_path: Some(fx.worktree()),
         session_name: None,
         claude_session_id: None,
-        herdr_workspace_id: Some("w9".into()),
-        herdr_pane_id: Some("w9:p1".into()),
+        terminal_id: Some("t9".into()),
         pr_url: None,
         created_at: ts,
         updated_at: ts,
@@ -382,7 +409,7 @@ fn resume_without_a_session_fails_and_names_the_task() {
         "conductor: cannot resume fix-login-07: no session_start event recorded its Claude \
          session id\nconductor: cannot resume 1 task\n"
     );
-    assert_eq!(fx.herdr_calls(), ["pane list"]);
+    assert_eq!(fx.tool_calls(), ["hc get t9 --json"]);
 }
 
 #[test]
@@ -405,47 +432,61 @@ fn hook_never_fails() {
 }
 
 #[test]
-fn conductor_session_start_records_pane_and_opens_the_deck() {
+fn conductor_session_start_records_terminal_and_opens_the_deck() {
     let fx = Fixture::new();
     assert_success(&fx.run(&fx.repo(), &["init"]));
     let repo_id = resolve_repo(&fx.repo()).unwrap().id;
-    let hook = |event: &str| {
-        let output = fx
+    let hook = |event: &str, source: &str| {
+        let mut child = fx
             .command(fx.tmp.path(), &["hook", event])
             .env("CONDUCTOR_ROLE", "conductor")
             .env("CONDUCTOR_REPO_ID", &repo_id)
-            .env("HERDR_PANE_ID", "p1")
-            .env("HERDR_WORKSPACE_ID", "w1")
-            .output()
+            .env("HC_TERMINAL_ID", "t11")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .unwrap();
+        let input = format!(r#"{{"session_id":"c1","source":"{source}"}}"#);
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
         assert_success(&output);
         assert!(output.stdout.is_empty() && output.stderr.is_empty());
     };
     let record = || read_repo_record(&fx.repo_dir()).unwrap().unwrap();
 
-    // Only SessionStart touches repo.json or herdr in the conductor session.
-    hook("pre-tool-use");
-    assert_eq!(record().herdr_pane_id, None);
-    assert_eq!(fx.herdr_calls(), Vec::<String>::new());
+    // Only SessionStart touches repo.json, hc or Herdr in the conductor session.
+    hook("pre-tool-use", "startup");
+    assert_eq!(record().terminal_id, None);
+    assert_eq!(fx.tool_calls(), Vec::<String>::new());
 
-    hook("session-start");
-    assert_eq!(record().herdr_pane_id.as_deref(), Some("p1"));
-    assert_eq!(record().herdr_workspace_id.as_deref(), Some("w1"));
+    hook("session-start", "startup");
+    assert_eq!(record().terminal_id.as_deref(), Some("t11"));
+    assert_eq!(record().space_id.as_deref(), Some("sp1"));
     assert!(!fx.home().join("logs").exists());
     assert_eq!(
-        fx.herdr_calls(),
+        fx.tool_calls(),
         [
-            "plugin list --plugin conductor-deck --json",
-            "pane list --workspace w1",
-            "plugin pane open --plugin conductor-deck --entrypoint deck --placement split \
-             --direction right --target-pane p1",
+            "hc get t11 --json",
+            "herdr-app ls",
+            r#"herdr-app do pane.split --direction right --pane p11 --mod conductor-deck --props {"space":"sp1"}"#,
         ]
     );
 
+    // A compact restarts the session in the same tab: no second deck.
+    hook("session-start", "compact");
+    assert_eq!(fx.tool_calls().len(), 4);
+    assert_eq!(fx.tool_calls()[3], "hc get t11 --json");
+
     // `init` from a plain terminal keeps both.
     assert_success(&fx.run(&fx.repo(), &["init"]));
-    assert_eq!(record().herdr_pane_id.as_deref(), Some("p1"));
-    assert_eq!(record().herdr_workspace_id.as_deref(), Some("w1"));
+    assert_eq!(record().terminal_id.as_deref(), Some("t11"));
+    assert_eq!(record().space_id.as_deref(), Some("sp1"));
 }
 
 #[test]
@@ -455,6 +496,7 @@ fn conductor_session_start_without_repo_json_logs() {
         .command(fx.tmp.path(), &["hook", "session-start"])
         .env("CONDUCTOR_ROLE", "conductor")
         .env("CONDUCTOR_REPO_ID", "missing-000000")
+        .env("HC_TERMINAL_ID", "t11")
         .output()
         .unwrap();
     assert_success(&output);
@@ -464,10 +506,28 @@ fn conductor_session_start_without_repo_json_logs() {
 }
 
 #[test]
+fn conductor_session_start_outside_herdr_does_nothing() {
+    let fx = Fixture::new();
+    assert_success(&fx.run(&fx.repo(), &["init"]));
+    let before = read_repo_record(&fx.repo_dir()).unwrap();
+    let repo_id = resolve_repo(&fx.repo()).unwrap().id;
+    let output = fx
+        .command(fx.tmp.path(), &["hook", "session-start"])
+        .env("CONDUCTOR_ROLE", "conductor")
+        .env("CONDUCTOR_REPO_ID", &repo_id)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert_eq!(read_repo_record(&fx.repo_dir()).unwrap(), before);
+    assert_eq!(fx.tool_calls(), Vec::<String>::new());
+    assert!(!fx.home().join("logs").exists());
+}
+
+#[test]
 fn every_command_has_help() {
     for name in [
         "init", "start", "status", "hook", "report", "decision", "task", "spawn", "teardown",
-        "watch", "resume",
+        "watch", "resume", "deck",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_conductor"))
             .args([name, "--help"])
@@ -687,17 +747,12 @@ fn spawn_dry_run_prints_commands_and_changes_nothing() {
     assert_success(&fx.run(&fx.repo(), &["task", "phase", &id, "briefed"]));
     let before = fx.task(&id);
 
-    // From the conductor's environment: the herdr binary comes from HERDR_BIN_PATH.
-    let output = fx
-        .command(&fx.worktree(), &["spawn", &id, "--dry-run"])
-        .env("HERDR_BIN_PATH", "/opt/herdr/bin/herdr")
-        .output()
-        .unwrap();
+    let output = fx.run(&fx.worktree(), &["spawn", &id, "--dry-run"]);
     assert_success(&output);
     let root = fx.repo().canonicalize().unwrap();
     let out = stdout(&output);
     let lines: Vec<_> = out.lines().collect();
-    assert_eq!(lines.len(), 3, "{out}");
+    assert_eq!(lines.len(), 2, "{out}");
     assert_eq!(
         lines[0],
         format!(
@@ -705,23 +760,40 @@ fn spawn_dry_run_prints_commands_and_changes_nothing() {
             root.display()
         )
     );
+    // No space recorded yet, so no label.
     assert!(
-        lines[1].starts_with(&format!(
-            "/opt/herdr/bin/herdr worktree open --cwd {} --path '<path>'",
-            root.display()
-        )),
+        lines[1]
+            .starts_with("hc run --bg --json --cwd '<path>' --no-notify -- env CONDUCTOR_TASK_ID="),
         "{out}"
     );
     assert!(
-        lines[2].starts_with("/opt/herdr/bin/herdr pane run '<pane>' 'env CONDUCTOR_TASK_ID="),
-        "{out}"
-    );
-    assert!(
-        lines[2].contains(" claude -n my-repo-fix-login-01 "),
+        lines[1].contains(" claude -n my-repo-fix-login-01 "),
         "{out}"
     );
     assert_eq!(fx.task(&id), before);
     assert_eq!(fx.phase_events(&id), [(Phase::Intake, Phase::Briefed)]);
+}
+
+#[test]
+fn deck_json_reads_the_repo_from_any_checkout() {
+    let fx = Fixture::new();
+    let id = fx.new_task("Fix login", "ship");
+    let output = fx.run(&fx.worktree(), &["deck", "--json"]);
+    assert_success(&output);
+    let feed: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let repo_id = resolve_repo(&fx.repo()).unwrap().id;
+    assert_eq!(feed["repo"]["id"], repo_id.as_str());
+    assert_eq!(feed["repo"]["dir"], fx.repo_dir().to_str().unwrap());
+    assert_eq!(feed["tasks"][0]["id"], id.as_str());
+    assert_eq!(feed["tasks"][0]["phase"], "intake");
+
+    let output = fx.run(&fx.repo(), &["deck"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("pass --json"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]

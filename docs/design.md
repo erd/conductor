@@ -1,7 +1,8 @@
 # Conductor design
 
-Status: draft, pre-implementation. Last updated 2026-10-13.
-Verified against Claude Code 2.1.296, herdr 0.9.4, worktrunk 0.64.0.
+Status: implemented. Last updated 2026-11-12.
+Verified against Claude Code 2.1.296, Herdr.app 0.1.15 with herdr-core (`hc`) 0.1.20, worktrunk
+0.64.0.
 
 ## Goal
 
@@ -9,9 +10,9 @@ Hand one Claude Code session a high-level goal and have it run the whole job:
 break the goal into tasks, give each task to its own worker agent, supervise the
 workers, review their work, and hand me finished PRs to merge on GitHub. This is the
 "executive assistant" pattern. Show every task as a card in a deck docked on the
-right side of herdr.
+right side of the conductor's tab in [Herdr](https://herdr.dev).
 
-Conductor is a Claude Code-only, herdr-only rebuild of the ideas in
+Conductor is a Claude Code-only, Herdr-only rebuild of the ideas in
 [firstmate](https://github.com/kunchenguid/firstmate) and
 [captains-deck](https://github.com/deimantasnork/captains-deck). Assuming one
 agent CLI and one multiplexer removes most of firstmate's ~125k lines of bash
@@ -22,7 +23,8 @@ agent CLI and one multiplexer removes most of firstmate's ~125k lines of bash
 - One user (me), one machine, no remote sessions.
 - One repo per conductor session. Several conductors, one per repo, can run at
   once.
-- Claude Code and herdr only. Worktrees are created and removed with
+- Claude Code and the Herdr app (Herdr.app with herdr-core, `hc`) only. The
+  herdr TUI (`herdr` 0.9.x) is no longer supported. Worktrees are created and removed with
   [worktrunk](https://worktrunk.dev), following my existing worktrunk config.
 - Every ship task ends as a GitHub PR, and I merge it on GitHub. Nothing is
   merged locally; after a merge, the conductor just pulls the default branch
@@ -36,7 +38,7 @@ agent CLI and one multiplexer removes most of firstmate's ~125k lines of bash
 - A declarative workflow format. The workflow is prose in the `conductor`
   skill until two or three real patterns show what is worth abstracting.
 - Supporting other agent CLIs or multiplexers.
-- Approving permission prompts from the deck (focus the pane instead).
+- Approving permission prompts from the deck (focus the worker's tab instead).
 - Tasks that span repos.
 
 ## Architecture
@@ -45,30 +47,29 @@ agent CLI and one multiplexer removes most of firstmate's ~125k lines of bash
 flowchart LR
     me(["Me"])
 
-    subgraph primary["herdr · repo's primary workspace · conductor tab"]
+    subgraph space["Herdr · the conductor's space"]
         direction TB
-        cond["<b>conductor session</b><br/>claude -n conductor-#lt;repo#gt;"]
-        deck["<b>conductor-deck</b><br/>herdr plugin pane · Rust/ratatui<br/>docked as a right split"]
-    end
-
-    subgraph folded["herdr · worktree workspaces folded under the primary"]
-        workers["<b>worker sessions</b>, one per task<br/>claude -n #lt;repo#gt;-#lt;task#gt;<br/>--permission-mode auto"]
+        subgraph ctab["conductor tab"]
+            cond["<b>conductor session</b><br/>claude -n conductor-#lt;repo#gt;"]
+            deck["<b>conductor-deck</b><br/>Herdr mod pane (JavaScript)<br/>split to the right"]
+        end
+        workers["<b>worker sessions</b>, one hc terminal and tab per task<br/>claude -n #lt;repo#gt;-#lt;task#gt;<br/>--permission-mode auto"]
     end
 
     subgraph shared["shared state"]
         direction TB
         state[("~/.config/conductor/repos/#lt;repo-id#gt;/<br/>tasks/#lt;task#gt;/<br/>task.json · brief.md · events.jsonl<br/>decisions/ · report.md")]
-        herdrapi{{"herdr socket<br/>events.subscribe · agent get"}}
+        feed{{"conductor deck --json"}}
     end
 
     me -->|chat| cond
-    cond -->|"conductor spawn<br/>wt switch → herdr worktree open<br/>→ herdr pane run claude"| workers
+    cond -->|"conductor spawn<br/>wt switch → hc run --label herdr.space=…"| workers
     cond <-->|SendMessage| workers
     workers -->|"hooks + conductor report"| state
     cond -->|"conductor task / decision"| state
-    state -->|file watch| deck
-    herdrapi -->|agent status · tokens| deck
-    deck -.->|"Enter: herdr agent focus<br/>m: herdr agent prompt"| workers
+    state --> feed
+    feed -->|"re-run on file changes"| deck
+    deck -.->|"focus the worker's tab<br/>message it"| workers
 ```
 
 ### The two repos
@@ -76,7 +77,7 @@ flowchart LR
 | Repo | Contents |
 |---|---|
 | `conductor` (this repo) | The Claude Code plugin (skills, hooks, marketplace manifest). A Rust workspace with the `conductor` CLI and the `conductor-state` crate, which holds the shared types. |
-| `conductor-deck` (separate) | The herdr plugin: `herdr-plugin.toml` plus a Rust/ratatui TUI. It depends on `conductor-state` through a git dependency pinned to a tag. |
+| `conductor-deck` (separate) | The Herdr mod (JavaScript, in `~/.config/herdr-app/mods/conductor-deck/`). It reads tasks from `conductor deck --json` and doesn't depend on `conductor-state`. |
 
 Planned layout of this repo:
 
@@ -110,7 +111,7 @@ Install:
 ~/.config/conductor/
   config.toml                         global defaults plus optional [repos."<repo-id>"] overrides
   repos/<repo-id>/
-    repo.json                         repo root path, conductor session name, primary herdr workspace id, conductor pane id
+    repo.json                         repo root path, conductor session name, the conductor's hc terminal and Herdr space
     tasks/<task-id>/
       task.json                       task record (one writer: the conductor CLI)
       brief.md                        the task contract the worker reads
@@ -120,11 +121,17 @@ Install:
 ```
 
 File format (`conductor-state`, which also publishes a JSON Schema at
-`crates/conductor-state/schema/conductor-state.v1.json`):
+`crates/conductor-state/schema/conductor-state.v2.json`):
 
 - Every key and enum value is `snake_case`.
 - `task.json`, `repo.json` and `decisions/<key>.json` carry `"schema":
-  "conductor-state.v1"`. A reader rejects any other marker.
+  "conductor-state.v2"`. A reader also accepts `conductor-state.v1`, from
+  before the move to the Herdr app, and rejects any other marker. v2 replaced
+  v1's herdr pane and workspace fields with hc terminal (and, in `repo.json`,
+  Herdr space) fields. A v1 file's herdr fields are dropped as unknown fields,
+  and the next write marks it v2. So a task that was live under the herdr TUI
+  has no terminal; `conductor resume` restarts its worker, and its old TUI pane
+  has to be closed by hand.
 - Readers ignore unknown fields, and an unknown event `kind` is kept rather than
   rejected, so new fields and event kinds don't break older readers.
 
@@ -147,14 +154,15 @@ Writing rules, which avoid locking and the crash-recovery logic firstmate needs:
   line written with `O_APPEND`.
 - **`task.json`** is written only by `conductor` CLI subcommands, and only with
   a write-temp-then-rename. Its fields: id, title, phase, branch, worktree path,
-  session name, Claude session id, herdr workspace and pane ids, kind (`ship`
+  session name, Claude session id, the worker's hc terminal, kind (`ship`
   or `scout`), PR URL, and timestamps. A worker's `report --pr` doesn't touch
   it: the URL stays in the `status` event, and readers take it from the fold.
 - **`decisions/<key>.json`** is written only by `conductor decision open` and
   `conductor decision answer`, the same write-temp-then-rename way.
-- **The deck never writes** state files. It works out live status by
-  replaying the events and reading herdr's own agent state, and answers a
-  decision by running `conductor decision answer --by deck`.
+- **The deck never writes** state files. It reads them through
+  `conductor deck --json` (see [The deck](#the-deck-conductor-deck)), adds the
+  live hc status only the app has, and answers a decision by running
+  `conductor decision answer --by deck`.
 
 ### Event types (`conductor-state`)
 
@@ -162,7 +170,7 @@ Every event carries `ts`, `task`, `kind`, and `session_id` (when known).
 
 | kind | Source | Payload |
 |---|---|---|
-| `session_start` | SessionStart hook | `source`, `herdr_pane_id`, `herdr_workspace_id`, `transcript_path` |
+| `session_start` | SessionStart hook | `source`, `terminal_id` (`HC_TERMINAL_ID`), `transcript_path` |
 | `prompt` | UserPromptSubmit hook | first line of the prompt (truncated) |
 | `tool_start` / `tool_end` | PreToolUse / PostToolUse and PostToolUseFailure hooks | `tool_name`, a short summary (file path, command head), `command?` (start only: the whole Bash command, when the summary cuts it), `tool_use_id?`, `ok` (end only) |
 | `attention` | Notification hook | `type` (`permission_prompt`, `idle_prompt`, …), message |
@@ -235,21 +243,28 @@ stateDiagram-v2
    task to `spawning`, then:
    1. runs `wt -C <repo> switch --create <branch> --no-cd --format=json` and
       records `path` and `branch`;
-   2. runs `herdr worktree open --cwd <repo-root> --path <path> --label
-      <task> --no-focus --json`, which folds the new workspace under the
-      conductor's, and records the workspace and pane ids;
-   3. runs `herdr pane run <pane> "env CONDUCTOR_TASK_ID=<task>
-      CONDUCTOR_REPO_ID=<repo-id> CONDUCTOR_HOME=… claude -n <repo>-<task> --permission-mode auto 'Read
-      your brief at <path> and follow the conductor worker skill.'"`, adding
-      `--model`/`--effort` when config sets them. The line goes through `env`,
-      and its quoting keeps backslashes out of single quotes, so it reads the
-      same in bash, zsh and fish.
+   2. runs `hc run --bg --json --cwd <path> --label herdr.space=<space>
+      --no-notify -- env CONDUCTOR_TASK_ID=<task> CONDUCTOR_REPO_ID=<repo-id>
+      CONDUCTOR_HOME=… claude -n <repo>-<task> --permission-mode auto 'Read
+      your brief at <path> and follow the conductor worker skill.'`, adding
+      `--model`/`--effort` when config sets them, and records the terminal's
+      address (`t…`). `<space>` is the conductor's Herdr space from
+      `repo.json`; Herdr shows any hc terminal labelled with it as a new tab in
+      that space. hc runs the argv directly, with no shell in between. The
+      terminal is a child of the one spawn runs from, normally the
+      conductor's, so it ends when that one does. `--no-notify` keeps hc from
+      typing notes about the worker into the conductor's session: the hooks
+      already report all of it. With no space recorded, the worker runs
+      without a tab and spawn says to watch it with `hc attach <terminal>`;
+   3. waits up to 5 s for Herdr to show the terminal (`herdr-app ls`), then
+      names its tab after the task with `herdr-app do tab.rename`. This is
+      cosmetic: a failure is only a warning.
 
    It writes everything to `task.json` in one go and moves the task to
    `working`. If a step fails, the task moves to `failed` instead, with the
    error in a `status` event, and `task.json` records only what was actually
    created so teardown can remove it. Spawn refuses a task that already has a
-   pane, and a branch that already exists unless given `--reuse-branch`.
+   terminal, and a branch that already exists unless given `--reuse-branch`.
    `--dry-run` prints the commands without running them.
 4. **Supervise.** Wake on worker messages and on events (see [Waking the
    conductor](#waking-the-conductor)). Answer decisions the conductor can
@@ -280,32 +295,37 @@ stateDiagram-v2
    1. Pull the default branch in the primary checkout with `git pull
       --ff-only`, but only if that checkout is on the default branch and
       clean. Otherwise fetch and warn.
-   2. Stop the worker session.
+   2. Stop the worker: `hc send <terminal> /exit`, wait up to 10 s for its
+      `session_end`, then `hc kill` and `hc rm` the terminal. Its pane and tab
+      close when its program ends. `hc send` waits up to a minute while I have
+      typed something unsent into the worker's terminal, and refuses at once
+      while the worker waits on a permission prompt or a question; teardown
+      then kills it without asking.
    3. Run `wt remove <branch>`. worktrunk recognizes squash and rebase merges
       against the updated default branch and deletes the branch itself. If
       its check gives up (its history walk is capped), fall back to `wt remove
       -D`, which is safe because GitHub already reported the merge.
-   4. Close the herdr workspace.
-   5. Report to me.
+   4. Report to me.
 
 ### Resume
 
-Closing the conductor's workspace row in herdr closes every worker workspace
-folded under it. The worktrees, branches and task state survive. To get the
-workers back, rerun `conductor start`, then `conductor resume [<task>...]`.
-With no ids it covers every task in `working`, `needs_decision`, `review` or
-`awaiting_merge`. It lists herdr's panes once, skips a task whose recorded pane
-is still open, and for each of the others:
+A worker's terminal is a child of the conductor's, so closing the conductor's
+tab or space ends every worker. A reboot or a herdr-core crash loses them too:
+hc keeps a terminal Herdr shows, but replaces its lost program with a shell
+and never reruns it. The worktrees, branches and task state survive. To get
+the workers back, rerun `conductor start`, then `conductor resume
+[<task>...]`. With no ids it covers every task in `working`, `needs_decision`,
+`review` or `awaiting_merge`. For each, it runs `hc get <terminal>` and skips
+the task if the terminal is live and still running the worker (its argv holds
+`CONDUCTOR_TASK_ID=<task>`). For each of the others:
 
 1. takes the session id from the task's latest `session_start` event, and
    fails that task with a clear error if there is none;
-2. runs `herdr worktree open --cwd <repo-root> --path <worktree> --label
-   <task> --no-focus --json`, and records the new workspace and pane ids in
-   `task.json` straight away, so teardown can close them even if the next step
-   fails;
-3. runs `herdr pane run <pane> "env … claude --resume <session-id> -n
-   <repo>-<task> --permission-mode auto"`, with the same environment,
-   `--model`/`--effort` and quoting as spawn.
+2. kills a live terminal that isn't running the worker (a replacement shell),
+   and removes the old terminal;
+3. runs `hc run` as spawn does, with `claude --resume <session-id>` instead of
+   the brief prompt, records the new terminal in `task.json`, and names its
+   tab.
 
 The phase doesn't change. One task failing doesn't stop the rest; resume exits
 non-zero at the end if any failed. `--dry-run` prints the commands without
@@ -336,13 +356,13 @@ running them. Restoring the conductor's own session is out of scope:
 |---|---|
 | conductor → worker | `SendMessage` to `<repo>-<task>`. Verified working on an idle interactive worker. |
 | worker → conductor | `SendMessage` to `conductor-<repo>`, plus `conductor report` events. Verified working. |
-| deck → worker | `herdr agent prompt <pane> "<text>"`. Verified working; `--wait` returns when the turn ends. herdr refuses this while the agent is `blocked`. |
-| deck → conductor | `herdr agent prompt <conductor-pane> "<text>"` |
+| deck → worker | `hc send <terminal> "<text>"`. hc refuses this while the worker is `blocked`. |
+| deck → conductor | `hc send <conductor-terminal> "<text>"` |
 | hooks → everyone | append to `events.jsonl` |
 
 Claude Code has no CLI or documented socket protocol for sending a
-cross-session message from a non-Claude process, so the deck uses herdr's
-prompt command instead.
+cross-session message from a non-Claude process, so the deck types into the
+session's terminal with hc instead.
 
 ### Waking the conductor
 
@@ -361,7 +381,7 @@ forgets to report, so there is a backstop:
   `attention`, `turn_end` without a `status` report since the last prompt
   from the user or the conductor (once per prompt, and not while a decision is
   open), `session_end`, `decision_open`, or the first `prompt` while a decision
-  is open (the user may have answered it in the worker's pane). A prompt the
+  is open (the user may have answered it in the worker's terminal). A prompt the
   harness injects when a background shell or subagent finishes
   (`<task-notification>`) counts for neither rule: it starts a turn, but asks
   nothing of the worker. It writes a short wake summary to stderr, one line per
@@ -437,7 +457,7 @@ which is moved to `hook.log.1` once it reaches 1 MiB.
   prompting modes deliver to each other without a dialog (verified).
 - Prompts that auto mode still raises (explicit `ask` rules, protected paths,
   and so on) produce a Notification hook event. The deck shows the card as
-  needing attention; I focus the pane and answer there.
+  needing attention; I focus the worker's tab and answer there.
 - Folder trust: worktrunk worktrees sit inside the repo (`.worktrees/`), and
   trust is keyed on the main checkout, so workers start with no trust dialog
   (verified). The repo itself must have been trusted once.
@@ -449,49 +469,54 @@ which is moved to `hook.log.1` once it reaches 1 MiB.
 
 ## The deck (`conductor-deck`)
 
-- **Placement:** a herdr plugin `[[panes]]` entry. It opens as
-  `placement = "split"`, `--direction right`, targeting the conductor's pane in
-  the conductor's tab. It stays there: workers live in their own folded
-  workspaces, and the herdr sidebar covers navigation when I jump into one.
-- **Width:** after opening, the deck sets its width with
-  `layout.set_split_ratio`, and recomputes the ratio from the terminal width on
-  `layout.updated` to stay close to the configured `deck_width` in columns.
-- **Icons:** `deck_icons` picks the glyphs: `unicode` (the default) for any
-  monospace font, or `nerd` for Nerd Font icons with powerline pills and section
-  segments, which needs a Nerd Font v3 terminal font.
-- **Opening:** the conductor's SessionStart hook runs `herdr plugin pane open
-  --plugin conductor-deck --entrypoint deck --placement split --direction right
-  --target-pane $HERDR_PANE_ID`, unless the deck plugin isn't installed and
-  enabled or the deck is already open. herdr doesn't report which plugin owns a
-  pane, but it labels a plugin pane with its manifest title, so "already open"
-  means a pane in the conductor's workspace labelled with the deck pane's
-  title. There is also a herdr keybinding action to toggle it.
-- **Data:**
-  - a file watch on `repos/<repo-id>/tasks/*/`;
-  - herdr `events.subscribe` (NDJSON over `HERDR_SOCKET_PATH`) for
-    `pane.agent_status_changed`;
-  - `herdr agent get <pane>` for tokens, context % and usage limit, which
-    herdr already exposes.
-  - It resyncs from `herdr api snapshot` on `events_lost`.
-- **Card:** task title and id, phase badge, live activity line (current tool,
-  or "needs permission", "waiting on decision", "idle"), elapsed time in that
-  state, context %, branch, and the PR line (draft or ready, checks, review
-  decision, from the latest `pr` event). Cards needing attention sort to the
-  top, and `awaiting_merge` cards sort just below them.
-- **Keys:** `Enter`/click runs `herdr agent focus <pane>`. `m` messages the
-  worker. `d` answers an open decision: it runs `conductor decision answer
-  --by deck` and prompts the worker. `o` opens the PR in the browser. `c` focuses the
-  conductor. `L` shows or hides torn-down tasks.
-- **Build:** herdr's `[[build]]` step runs `cargo build --release` on install.
-  Plugin panes start with a minimal `PATH`, so the deck finds herdr through
-  `HERDR_BIN_PATH` and uses absolute paths for everything else.
+The deck is a Herdr mod in the `conductor-deck` repo. Its cards, keys and
+layout are designed there; this repo owns opening it and the data it reads.
+
+- **Opening:** when a conductor session starts afresh (`SessionStart` with
+  source `startup`), its hook finds the conductor's app pane (`p…`, which
+  differs from its terminal `t…`) in `herdr-app ls` and runs
+  `herdr-app do pane.split --direction right --pane <pane> --mod
+  conductor-deck --props '{"space":"<space>"}'`. It skips this when
+  `$HERDR_APP_HOME` (else `~/.config/herdr-app`)`/mods/conductor-deck/main.js`
+  doesn't exist. A failure is logged to `hook.log`: the app may not be running.
+  Only mods can see which mods' panes are open, so the hook can't tell whether
+  a deck is already open in the tab. It doesn't reopen one on `clear`,
+  `compact` or `resume`; the mod itself closes a second copy in the same tab.
+- **Data:** `conductor deck --json`, run with the space's folder as the
+  current directory, so conductor resolves the repo. The deck re-runs it,
+  debounced, whenever anything under `repo.dir` changes. It prints one
+  document:
+
+  ```
+  { repo: { id, root, dir, terminal_id?, space_id? },
+    tasks: [ { id, title, kind, phase, phase_since?, activity, detail?, since,
+               report?: { verb, text?, pr_url?, ts },
+               decisions: [ { key, title?, opened_at } ],
+               branch?, pr_url?, pr?: { state, checks?, review? },
+               terminal_id?, updated_at }
+           | { id, error } ] }
+  ```
+
+  Every task is included, torn-down and abandoned ones too, oldest first; a
+  task that can't be read appears last with its error. `terminal_id` is the
+  worker's from its latest `session_start`, else `task.json`. The feed carries
+  data, not card states: sections, attention and sort stay in the mod, since
+  they mix in the live hc status that only the app has. `conductor status
+  --json` stays a separate, stable shape.
+- **Answers:** the deck records an answer with `conductor decision answer …
+  --by deck` and reads open decisions with `conductor decision list --open
+  --json`.
+
+The old herdr TUI deck's `deck_width` and `deck_icons` settings are gone: the
+app can't size a pane, and the mod draws its own icons. A `config.toml` that
+still sets them loads; they are ignored.
 
 ## What we drop from firstmate
 
 | firstmate subsystem | ~Lines | Conductor replacement |
 |---|---|---|
 | Support for many agent CLIs (adapters, launch templates, per-CLI supervision) | 10k+ | Claude only |
-| Five multiplexer backends, screen classifier, typed "doorbell" line, inbox re-ring | 10k | herdr CLI plus `SendMessage` |
+| Five multiplexer backends, screen classifier, typed "doorbell" line, inbox re-ring | 10k | `hc` and `herdr-app` plus `SendMessage` |
 | Text status parser, bash watcher, wake queue, guards | 20k | typed events, `conductor watch` through `asyncRewake` |
 | Trust-dialog handling (editing `~/.claude.json`) | — | not needed: worktrunk worktrees inherit trust |
 | Remote "secondmate" sessions, relay/voice/mail, Gerrit/GitLab/Forgejo, no-mistakes | 40k | out of scope |
@@ -513,10 +538,11 @@ Kept from firstmate:
 | Does `claude -n <name> --permission-mode auto '<prompt>'` work interactively? | Yes. It ran the prompt, showed `conductor-spike` in the prompt bar, and appeared in `ListAgents` under that name. |
 | Do messages between auto-mode sessions arrive with no dialog? | Yes, in both directions, tagged `from-mode="prompting"`. An idle worker picked the message up and replied. |
 | Does `notify_when_idle` work? | Yes, with a delay. Both notices (turns ending 19:05 and 19:06) arrived only after the subscribing session finished its own long turn. They include a one-line summary of the worker's turn. |
-| Do env vars reach the worker and its tools? | Yes: `CONDUCTOR_TASK_ID`, `HERDR_PANE_ID` and `HERDR_WORKSPACE_ID`. |
+| Do env vars reach the worker and its tools? | Yes: `CONDUCTOR_TASK_ID`, and (since the Herdr app) `HC_TERMINAL_ID`. |
 | Trust dialog in a worktrunk worktree? | None. |
-| Does the worktree workspace fold under the conductor? | Yes. `herdr worktree open --cwd <repo-root>` attached it to the repo's primary workspace, the one the conductor runs in. |
-| Does `herdr agent prompt --wait` reach a Claude worker? | Yes. It also returns the Claude session id and token, context and limit stats. |
+| Herdr app (2026-11-11): does a labelled `hc run` get its own tab? | Yes. `hc run --label herdr.space=<sp>` from the conductor's terminal shows up as a new tab, named by its position, within about 200 ms. It is also listed as a sub-agent of its parent. The app doesn't add a `herdr.tab` label, so the tab is found in `herdr-app ls`. |
+| Herdr app: what ends a worker's tab? | `hc kill` returns once the program has ended, and its pane and tab close on their own; `hc rm` then removes the record. `kill` on a finished terminal exits 0; `get`, `send` and `rm` on a removed one exit 3 (`not_found`). |
+| Herdr app: can a CLI see mod panes? | No. Neither `herdr-app ls` nor `status` lists them; only mods see them, through `panes()`. |
 | What does `wt` do with unapproved project hooks when scripted? | Exits 1 with a clear message and creates no worktree. |
 | `wt switch --format=json` output | `{"action","branch","path","created_branch","base_branch"}` |
 | Hook overhead in non-conductor sessions | About 3.9 ms over a bare `sh` (Rust binary, release + LTO, 376 KB). |
@@ -524,15 +550,12 @@ Kept from firstmate:
 
 ## Risks and open items
 
-- **herdr churn.** Plugin v1 is "an early interface" and herdr releases every
-  1–3 weeks. Pin `min_herdr_version` and keep herdr calls in one module of the
-  deck.
-- **Holding the deck width.** Splits are ratio-based, so a fixed column width
-  depends on recomputing the ratio on every `layout.updated`. Verify this
-  doesn't fight manual resizes.
-- **Closing the conductor's workspace row closes every worker workspace.** The
-  worktrees and branches survive, and `conductor resume` reopens the workers
-  (see [Resume](#resume)). The conductor's own session starts fresh.
+- **Herdr churn.** Herdr.app and herdr-core are young and release often. Keep
+  `hc` and `herdr-app` calls in `crates/conductor/src/hc.rs` and `deck.rs`.
+- **Closing the conductor's tab ends every worker.** Workers are children of
+  the conductor's terminal. The worktrees and branches survive, and
+  `conductor resume` restarts the workers (see [Resume](#resume)). The
+  conductor's own session starts fresh.
 - **Auto mode reviews every `SendMessage` before sending it.** That adds
   latency and the possibility of a refusal. Watch for this once real tasks run.
 - **Nothing in `asyncRewake` tells the conductor what woke it.** It has to read
@@ -551,6 +574,6 @@ Kept from firstmate:
    `conductor status` only.
 3. **`conductor watch`** and the conductor's `asyncRewake` Stop hook.
 4. **`conductor-deck`:** read-only cards, then focus and message, then
-   decision answers.
+   decision answers. Rewritten as a Herdr mod reading `conductor deck --json`.
 5. **PR lifecycle:** draft PR → `conductor pr ready`, PR polling in `conductor
    watch`, pull + `wt remove` teardown, `conductor resume`.

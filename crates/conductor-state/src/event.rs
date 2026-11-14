@@ -70,10 +70,9 @@ pub enum EventPayload {
     SessionStart {
         /// Why the session started: `startup`, `resume`, `clear`, `compact`, …
         source: String,
+        /// The hc terminal the session runs in (`HC_TERMINAL_ID`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        herdr_pane_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        herdr_workspace_id: Option<String>,
+        terminal_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transcript_path: Option<String>,
     },

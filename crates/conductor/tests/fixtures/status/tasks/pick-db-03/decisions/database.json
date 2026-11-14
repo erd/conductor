@@ -1,0 +1,11 @@
+{
+  "schema": "conductor-state.v2",
+  "key": "database",
+  "title": "Postgres or ClickHouse?",
+  "about": "The analytics tables are append-heavy.",
+  "options": [
+    { "value": "postgres", "label": "Postgres" },
+    { "value": "clickhouse", "label": "ClickHouse" }
+  ],
+  "recommend": "clickhouse"
+}

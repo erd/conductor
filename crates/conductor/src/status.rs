@@ -2,8 +2,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use conductor_state::{
-    Activity, CheckState, LiveStatus, Phase, PrState, ReviewDecision, Task, TaskKind, events_path,
-    fold, read_events, read_task, task_ids,
+    Activity, CheckState, LiveStatus, Phase, PrState, PrStatus, ReviewDecision, Task, TaskKind,
+    events_path, fold, read_events, read_task, task_ids,
 };
 use jiff::Timestamp;
 use serde::Serialize;
@@ -103,8 +103,10 @@ pub fn collect(repo_dir: &Path, all: bool) -> anyhow::Result<Vec<Row>> {
         .collect())
 }
 
-fn row(task: Task, live: LiveStatus) -> Row {
-    let (activity, detail) = match live.activity {
+/// The kind of `activity`, and its detail: the running tool and its summary, the permission
+/// message, the turn's error, or the exit reason.
+pub fn activity_parts(activity: Activity) -> (ActivityKind, Option<String>) {
+    match activity {
         Activity::NotStarted => (ActivityKind::NotStarted, None),
         Activity::Working { tool } => (
             ActivityKind::Working,
@@ -116,7 +118,21 @@ fn row(task: Task, live: LiveStatus) -> Row {
         Activity::NeedsPermission { message } => (ActivityKind::NeedsPermission, Some(message)),
         Activity::Idle { error } => (ActivityKind::Idle, error),
         Activity::Exited { reason } => (ActivityKind::Exited, Some(reason)),
-    };
+    }
+}
+
+impl From<PrStatus> for PrRow {
+    fn from(pr: PrStatus) -> Self {
+        Self {
+            state: pr.state,
+            checks: pr.checks,
+            review: pr.review,
+        }
+    }
+}
+
+fn row(task: Task, live: LiveStatus) -> Row {
+    let (activity, detail) = activity_parts(live.activity);
     Row {
         id: task.id,
         title: task.title,
@@ -124,15 +140,11 @@ fn row(task: Task, live: LiveStatus) -> Row {
         phase: task.phase,
         activity,
         detail,
-        open_decisions: live.open_decisions.into_iter().collect(),
+        open_decisions: live.open_decisions.into_keys().collect(),
         since: live.since.unwrap_or(task.updated_at),
         branch: task.branch,
         pr_url: task.pr_url.or(live.pr_url),
-        pr: live.pr.map(|pr| PrRow {
-            state: pr.state,
-            checks: pr.checks,
-            review: pr.review,
-        }),
+        pr: live.pr.map(PrRow::from),
     }
 }
 

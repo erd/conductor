@@ -22,7 +22,7 @@ pub enum Phase {
     AwaitingMerge,
     /// GitHub reports the PR merged.
     Merged,
-    /// The worktree, worker session and herdr workspace are gone.
+    /// The worktree, worker session and worker terminal are gone.
     TornDown,
     /// The task failed and needs a human.
     Failed,

@@ -1,4 +1,5 @@
-//! Running the external tools conductor drives (`wt`, `herdr`, `git`, `gh`) behind a trait, so
+//! Running the external tools conductor drives (`wt`, `hc`, `herdr-app`, `git`, `gh`) behind a
+//! trait, so
 //! commands that orchestrate them can be tested against a [`Fake`].
 
 use std::path::{Path, PathBuf};
@@ -7,7 +8,6 @@ use std::process::Command;
 use anyhow::{Context as _, anyhow, bail};
 use serde::Deserialize;
 
-use crate::context::env_var;
 use crate::shell;
 
 /// A command to run: program, arguments, working directory and extra environment.
@@ -157,28 +157,22 @@ impl Runner for System {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tools {
     pub wt: String,
-    pub herdr: String,
+    /// herdr-core's CLI, which runs the workers' terminals.
+    pub hc: String,
+    /// The Herdr app's CLI, which arranges what the window shows.
+    pub herdr_app: String,
     pub git: String,
     pub gh: String,
 }
 
-impl Tools {
-    /// `herdr` from `HERDR_BIN_PATH`, which herdr sets in its panes, else from `PATH`; the
-    /// others from `PATH`.
-    pub fn resolve() -> Self {
-        Self {
-            herdr: env_var("HERDR_BIN_PATH").unwrap_or_else(|| "herdr".to_owned()),
-            ..Self::default()
-        }
-    }
-}
-
 impl Default for Tools {
-    /// Every tool by its bare name, found on `PATH`.
+    /// Every tool by its bare name, found on `PATH`. Herdr installs `hc` and `herdr-app` in
+    /// `~/.local/bin`.
     fn default() -> Self {
         Self {
             wt: "wt".to_owned(),
-            herdr: "herdr".to_owned(),
+            hc: "hc".to_owned(),
+            herdr_app: "herdr-app".to_owned(),
             git: "git".to_owned(),
             gh: "gh".to_owned(),
         }
@@ -289,9 +283,9 @@ mod tests {
 
     #[test]
     fn display_quotes_env_program_and_args() {
-        let mut cmd = Cmd::new("herdr").args(["pane", "run", "p 1"]);
+        let mut cmd = Cmd::new("hc").args(["send", "t1", "a b"]);
         cmd.env.push(("A".into(), "x y".into()));
-        assert_eq!(cmd.display(), "A='x y' herdr pane run 'p 1'");
+        assert_eq!(cmd.display(), "A='x y' hc send t1 'a b'");
     }
 
     #[test]

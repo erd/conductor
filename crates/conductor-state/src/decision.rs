@@ -2,12 +2,12 @@ use jiff::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::SchemaV1;
+use crate::SchemaV2;
 
 /// An open question and, once answered, its answer: `decisions/<key>.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Decision {
-    pub schema: SchemaV1,
+    pub schema: SchemaV2,
     /// Unique within the task; also the file name.
     pub key: String,
     pub title: String,

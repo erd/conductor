@@ -51,5 +51,5 @@ the title, then the one fact that matters most, and the PR URL when there is one
 - Done: "merged" or "abandoned".
 
 End with what the user can do next, if anything needs them: answer a decision (here or with `d`
-in the deck), approve a permission prompt (focus the worker's pane with `Enter` in the deck),
-reopen exited workers whose panes were closed (`conductor resume`), or merge a PR on GitHub.
+in the deck), approve a permission prompt (focus the worker's tab from the deck), restart
+workers whose tabs were closed (`conductor resume`), or merge a PR on GitHub.

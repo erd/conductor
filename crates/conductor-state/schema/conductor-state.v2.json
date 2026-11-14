@@ -58,25 +58,12 @@
       "type": "string"
     },
     "Config": {
-      "description": "`config.toml`: global defaults, plus optional per-repo overrides under\n`[repos.\"<repo-id>\"]`. Use [`Config::resolve`] to get the settings for one repo.",
+      "description": "`config.toml`: global defaults, plus optional per-repo overrides under\n`[repos.\"<repo-id>\"]`. Use [`Config::resolve`] to get the settings for one repo. Unknown keys\nare ignored, so a file that still sets a removed setting (`deck_width`, `deck_icons`) loads.",
       "properties": {
         "branch_prefix": {
           "default": "conductor/",
           "description": "Prefix for task branches.",
           "type": "string"
-        },
-        "deck_icons": {
-          "$ref": "#/$defs/DeckIcons",
-          "default": "unicode",
-          "description": "Glyphs the deck draws with: `unicode`, or `nerd` for a Nerd Font terminal."
-        },
-        "deck_width": {
-          "default": 48,
-          "description": "Width of the deck, in columns.",
-          "format": "uint16",
-          "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
         },
         "effort": {
           "description": "Claude effort level for workers; unset uses Claude Code's default.",
@@ -147,7 +134,7 @@
           ]
         },
         "schema": {
-          "const": "conductor-state.v1",
+          "const": "conductor-state.v2",
           "description": "Schema version marker for top-level state files.",
           "type": "string"
         },
@@ -185,39 +172,12 @@
       ],
       "type": "object"
     },
-    "DeckIcons": {
-      "description": "The glyphs the deck draws with.",
-      "oneOf": [
-        {
-          "const": "unicode",
-          "description": "Box drawing and a few symbols, which any monospace font has.",
-          "type": "string"
-        },
-        {
-          "const": "nerd",
-          "description": "Nerd Font icons, powerline pills and segments; needs a Nerd Font v3 terminal font.",
-          "type": "string"
-        }
-      ]
-    },
     "Event": {
       "description": "One line of `events.jsonl`. The common fields sit next to the payload's fields, and the\npayload's `kind` says which payload it is.",
       "oneOf": [
         {
           "description": "`SessionStart` hook.",
           "properties": {
-            "herdr_pane_id": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "herdr_workspace_id": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "kind": {
               "const": "session_start",
               "type": "string"
@@ -225,6 +185,13 @@
             "source": {
               "description": "Why the session started: `startup`, `resume`, `clear`, `compact`, …",
               "type": "string"
+            },
+            "terminal_id": {
+              "description": "The hc terminal the session runs in (`HC_TERMINAL_ID`).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "transcript_path": {
               "type": [
@@ -576,7 +543,7 @@
         },
         {
           "const": "torn_down",
-          "description": "The worktree, worker session and herdr workspace are gone.",
+          "description": "The worktree, worker session and worker terminal are gone.",
           "type": "string"
         },
         {
@@ -610,25 +577,6 @@
             "null"
           ]
         },
-        "deck_icons": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DeckIcons"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "deck_width": {
-          "format": "uint16",
-          "maximum": 65535,
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
         "effort": {
           "type": [
             "string",
@@ -657,20 +605,6 @@
           "description": "The conductor's Claude session name, `conductor-<repo>`.",
           "type": "string"
         },
-        "herdr_pane_id": {
-          "description": "The herdr pane the conductor session runs in, recorded by its `SessionStart` hook.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "herdr_workspace_id": {
-          "description": "The repo's primary herdr workspace, which worker workspaces fold under.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "repo_id": {
           "description": "`<repo dir name>-<short hash of repo_root>`, e.g. `hamlet-web-v2-3f9a1c`.",
           "type": "string"
@@ -680,9 +614,23 @@
           "type": "string"
         },
         "schema": {
-          "const": "conductor-state.v1",
+          "const": "conductor-state.v2",
           "description": "Schema version marker for top-level state files.",
           "type": "string"
+        },
+        "space_id": {
+          "description": "The Herdr space the conductor's terminal is in, from its `herdr.space` label. Workers\nare started there, each in its own tab.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal_id": {
+          "description": "The hc terminal the conductor session runs in, recorded by its `SessionStart` hook.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -732,18 +680,6 @@
           "format": "date-time",
           "type": "string"
         },
-        "herdr_pane_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "herdr_workspace_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "id": {
           "description": "Short slug from the title plus a counter, e.g. `fix-login-07`.",
           "type": "string"
@@ -762,12 +698,19 @@
           ]
         },
         "schema": {
-          "const": "conductor-state.v1",
+          "const": "conductor-state.v2",
           "description": "Schema version marker for top-level state files.",
           "type": "string"
         },
         "session_name": {
           "description": "Claude session name, `<repo>-<task-id>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal_id": {
+          "description": "The hc terminal the worker runs in, e.g. `t7`. Set by `conductor spawn` and\n`conductor resume`; cleared by `conductor teardown` once the terminal is removed.",
           "type": [
             "string",
             "null"
@@ -815,7 +758,7 @@
       ]
     }
   },
-  "$id": "conductor-state.v1",
+  "$id": "conductor-state.v2",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "anyOf": [
     {
@@ -832,5 +775,5 @@
     }
   ],
   "description": "conductor's on-disk state: task.json, events.jsonl lines, decisions/<key>.json, repo.json and config.toml.",
-  "title": "conductor-state.v1"
+  "title": "conductor-state.v2"
 }

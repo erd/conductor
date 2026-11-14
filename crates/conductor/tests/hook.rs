@@ -52,13 +52,12 @@ impl Fixture {
             .env("CONDUCTOR_HOME", self.home())
             .env("CONDUCTOR_TASK_ID", TASK_ID)
             .env("CONDUCTOR_REPO_ID", REPO_ID)
-            .env("HERDR_PANE_ID", "p-1")
-            .env("HERDR_WORKSPACE_ID", "w-1");
+            .env("HC_TERMINAL_ID", "t1");
         command
     }
 }
 
-/// `conductor hook <event>` with no conductor or herdr variables, which are set when the tests
+/// `conductor hook <event>` with no conductor or hc variables, which are set when the tests
 /// run inside a conductor worker.
 fn bare_hook(event: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_conductor"));
@@ -67,8 +66,10 @@ fn bare_hook(event: &str) -> Command {
         .env_remove("CONDUCTOR_TASK_ID")
         .env_remove("CONDUCTOR_ROLE")
         .env_remove("CONDUCTOR_REPO_ID")
-        .env_remove("HERDR_PANE_ID")
-        .env_remove("HERDR_WORKSPACE_ID");
+        .env_remove("HC_TERMINAL_ID")
+        .env_remove("HC_TERMINAL_SOCKET")
+        .env_remove("HC_SCOPE")
+        .env_remove("HC_SESSION");
     command
 }
 

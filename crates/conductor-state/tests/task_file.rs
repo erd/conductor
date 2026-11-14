@@ -1,12 +1,12 @@
 use conductor_state::{
-    Error, Phase, RepoRecord, SchemaV1, Task, TaskKind, read_repo_record, read_task,
+    Error, Phase, RepoRecord, SchemaV2, Task, TaskKind, read_repo_record, read_task,
     repo_record_path, task_ids, task_path, write_repo_record_atomic, write_task_atomic,
 };
 
 fn task(phase: Phase) -> Task {
     let ts = "2026-10-14T12:00:00Z".parse().unwrap();
     Task {
-        schema: SchemaV1,
+        schema: SchemaV2,
         id: "fix-login-07".into(),
         title: "Fix login".into(),
         kind: TaskKind::Ship,
@@ -15,8 +15,7 @@ fn task(phase: Phase) -> Task {
         worktree_path: None,
         session_name: None,
         claude_session_id: None,
-        herdr_workspace_id: None,
-        herdr_pane_id: None,
+        terminal_id: None,
         pr_url: None,
         created_at: ts,
         updated_at: ts,
@@ -63,7 +62,7 @@ fn rejects_other_schema() {
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::write(
         &path,
-        text.replace("conductor-state.v1", "conductor-state.v2"),
+        text.replace("conductor-state.v2", "conductor-state.v3"),
     )
     .unwrap();
     let err = read_task(dir.path()).unwrap_err();
@@ -76,12 +75,12 @@ fn repo_record_round_trips() {
     assert_eq!(read_repo_record(dir.path()).unwrap(), None);
 
     let record = RepoRecord {
-        schema: SchemaV1,
+        schema: SchemaV2,
         repo_root: "/src/web".into(),
         repo_id: "web-3f9a1c".into(),
         conductor_session: "conductor-web".into(),
-        herdr_workspace_id: Some("w1".into()),
-        herdr_pane_id: Some("p1".into()),
+        terminal_id: Some("t1".into()),
+        space_id: Some("sp1".into()),
     };
     write_repo_record_atomic(dir.path(), &record).unwrap();
     assert_eq!(read_repo_record(dir.path()).unwrap(), Some(record));

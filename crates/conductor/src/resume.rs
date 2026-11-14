@@ -1,15 +1,15 @@
-//! `conductor resume [<task>...]`: reopens the herdr workspace of each live task whose pane is
-//! gone, and resumes its worker's Claude session there.
+//! `conductor resume [<task>...]`: restarts the worker of each live task whose terminal is gone,
+//! resuming its Claude session in a new hc terminal in the task's worktree.
 //!
-//! Closing the conductor's workspace row in herdr closes every worker workspace with it, but the
-//! worktrees, branches and task state survive. Resume opens the worktree again with `herdr
-//! worktree open`, runs `claude --resume` with the latest session id from the task's
-//! `session_start` events, and records the new workspace and pane in `task.json`. The phase
-//! doesn't change.
+//! A worker's terminal is a child of the conductor's, so closing the conductor's tab or space
+//! ends every worker, and a reboot loses them too, but the worktrees, branches and task state
+//! survive. Resume runs `claude --resume` with the latest session id from the task's
+//! `session_start` events in a new terminal, shown as a new tab in the conductor's space, and
+//! records the terminal in `task.json`. The phase doesn't change.
 
-use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use clap::Args;
@@ -19,9 +19,9 @@ use conductor_state::{
 use jiff::Timestamp;
 
 use crate::context::{Ctx, Target};
-use crate::deck::list_panes;
-use crate::runner::{Runner, System, Tools, check};
-use crate::spawn::{Launch, pane_run, parse_worktree_open, worker_command, worktree_open};
+use crate::hc::{self, Terminal};
+use crate::runner::{Cmd, Runner, System, Tools, check};
+use crate::spawn::{Launch, conductor_space, show_worker, worker_command};
 use crate::status::snake_case;
 
 /// The phases in which a task has a worker that should be running.
@@ -49,7 +49,8 @@ pub fn run(args: &ResumeArgs) -> anyhow::Result<()> {
         &ctx,
         args,
         &System,
-        &Tools::resolve(),
+        &Tools::default(),
+        hc::TAB_TIMEOUT,
         &mut std::io::stdout().lock(),
         &mut std::io::stderr().lock(),
     )
@@ -60,6 +61,7 @@ fn resume(
     args: &ResumeArgs,
     runner: &dyn Runner,
     tools: &Tools,
+    tab_timeout: Duration,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> anyhow::Result<()> {
@@ -78,22 +80,19 @@ fn resume(
         return Ok(());
     }
 
-    let open: BTreeSet<String> = list_panes(runner, tools, None)?
-        .into_iter()
-        .map(|pane| pane.pane_id)
-        .collect();
     let resumer = Resumer {
         ctx,
         runner,
         tools,
-        open: &open,
+        space: conductor_space(ctx)?,
+        tab_timeout,
         dry_run: args.dry_run,
     };
     let mut failed = 0;
     for id in &ids {
         let result = target
             .task_dir_for(id)
-            .and_then(|task_dir| resumer.resume(&task_dir, out));
+            .and_then(|task_dir| resumer.resume(&task_dir, out, err));
         if let Err(e) = result {
             writeln!(err, "conductor: cannot resume {id}: {e:#}")?;
             failed += 1;
@@ -125,14 +124,20 @@ struct Resumer<'a> {
     ctx: &'a Ctx,
     runner: &'a dyn Runner,
     tools: &'a Tools,
-    /// The ids of the panes herdr has open.
-    open: &'a BTreeSet<String>,
+    /// The conductor's Herdr space, where workers get their tabs.
+    space: Option<String>,
+    tab_timeout: Duration,
     dry_run: bool,
 }
 
 impl Resumer<'_> {
-    /// Resumes the task in `task_dir`, unless its pane is still open.
-    fn resume(&self, task_dir: &Path, out: &mut dyn Write) -> anyhow::Result<()> {
+    /// Resumes the task in `task_dir`, unless its worker is still running.
+    fn resume(
+        &self,
+        task_dir: &Path,
+        out: &mut dyn Write,
+        err: &mut dyn Write,
+    ) -> anyhow::Result<()> {
         let mut task = read_task(task_dir)?;
         let id = task.id.clone();
         if !LIVE.contains(&task.phase) {
@@ -141,12 +146,14 @@ impl Resumer<'_> {
                 snake_case(&task.phase)
             );
         }
-        if let Some(pane) = task
-            .herdr_pane_id
-            .as_ref()
-            .filter(|p| self.open.contains(*p))
+        let old = match &task.terminal_id {
+            Some(t) => hc::get(self.runner, self.tools, t)?.map(|term| (t.clone(), term)),
+            None => None,
+        };
+        if let Some((t, term)) = &old
+            && runs_worker(term, &id)
         {
-            writeln!(out, "{id} skipped: pane {pane} is still open")?;
+            writeln!(out, "{id} skipped: terminal {t} is still running")?;
             return Ok(());
         }
         let worktree = task
@@ -161,41 +168,71 @@ impl Resumer<'_> {
             .session_name
             .clone()
             .unwrap_or_else(|| self.ctx.worker_session(&id));
-        let worker = worker_command(self.ctx, &id, &name, &Launch::Resume(&session_id))?;
-        let open = worktree_open(
-            self.tools,
-            &self.ctx.repo.root,
-            &worktree.to_string_lossy(),
-            &id,
-        );
+        let worker = worker_command(self.ctx, &id, &name, &Launch::Resume(&session_id));
+        let run = hc::run(self.tools, &worktree, self.space.as_deref(), &worker);
 
         if self.dry_run {
-            writeln!(out, "{}", open.display())?;
-            writeln!(out, "{}", pane_run(self.tools, "<pane>", &worker).display())?;
+            if let Some((t, term)) = &old {
+                if term.live() {
+                    writeln!(out, "{}", self.hc(&["kill", t]).display())?;
+                }
+                writeln!(out, "{}", self.hc(&["rm", t]).display())?;
+            }
+            writeln!(out, "{}", run.display())?;
             return Ok(());
         }
 
-        let output = check("herdr worktree open", self.runner.run(&open)?)?;
-        let (workspace, pane) = parse_worktree_open(&output.stdout)?;
-        // Recorded before the worker starts, so teardown can close the workspace either way.
-        task.herdr_workspace_id = Some(workspace);
-        task.herdr_pane_id = Some(pane.clone());
+        if let Some((t, term)) = &old {
+            self.remove(t, term)?;
+            task.terminal_id = None;
+            save(task_dir, &mut task)?;
+        }
+        let output = check("hc run", self.runner.run(&run)?)?;
+        let terminal = hc::parse_run(&output.stdout)?;
+        task.terminal_id = Some(terminal.clone());
         task.session_name = Some(name);
         save(task_dir, &mut task)?;
-
-        let output = self.runner.run(&pane_run(self.tools, &pane, &worker))?;
-        check("herdr pane run", output).map_err(|e| {
-            e.context(format!(
-                "opened pane {pane} but couldn't start the worker there; close the pane and \
-                 rerun `conductor resume {id}`"
-            ))
-        })?;
-        writeln!(out, "{id} resumed in pane {pane}")?;
+        show_worker(
+            self.runner,
+            self.tools,
+            &id,
+            &terminal,
+            self.space.is_some(),
+            self.tab_timeout,
+            err,
+        )?;
+        writeln!(out, "{id} resumed in terminal {terminal}")?;
         Ok(())
+    }
+
+    /// Removes the task's old terminal: a finished one, or a live one whose worker was lost and
+    /// replaced with a shell, which hc does for a kept terminal after a reboot or a core restart.
+    fn remove(&self, terminal: &str, term: &Terminal) -> anyhow::Result<()> {
+        if term.live() {
+            let output = self.runner.run(&self.hc(&["kill", terminal]))?;
+            if !hc::failed_with(&output, hc::NOT_FOUND) && !hc::failed_with(&output, hc::FINISHED) {
+                check("hc kill", output)?;
+            }
+        }
+        let output = self.runner.run(&self.hc(&["rm", terminal]))?;
+        if !hc::failed_with(&output, hc::NOT_FOUND) {
+            check("hc rm", output)?;
+        }
+        Ok(())
+    }
+
+    fn hc(&self, args: &[&str]) -> Cmd {
+        Cmd::new(&self.tools.hc).args(args.iter().copied())
     }
 }
 
-/// Writes `task.json` with the new workspace and pane.
+/// Whether `term` is still running task `id`'s worker, rather than a shell that replaced it.
+fn runs_worker(term: &Terminal, id: &str) -> bool {
+    let marker = format!("CONDUCTOR_TASK_ID={id}");
+    term.live() && term.argv.contains(&marker)
+}
+
+/// Writes `task.json` with the new terminal.
 fn save(task_dir: &Path, task: &mut Task) -> anyhow::Result<()> {
     task.updated_at = Timestamp::now();
     write_task_atomic(task_dir, task)?;
@@ -207,20 +244,21 @@ mod tests {
     use std::path::PathBuf;
 
     use conductor_state::{
-        Event, EventPayload, Home, RepoIdent, SchemaV1, Settings, TaskKind, append_event,
+        Event, EventPayload, Home, RepoIdent, RepoRecord, SchemaV2, Settings, TaskKind,
+        append_event, write_repo_record_atomic,
     };
     use tempfile::TempDir;
 
     use super::*;
+    use crate::hc::tests::{get_json, ls};
     use crate::runner::Fake;
+    use crate::shell;
 
     const ID: &str = "fix-login-07";
     const ROOT: &str = "/src/my-repo";
     const WORKTREE: &str = "/src/my-repo/.worktrees/conductor-fix-login-07";
-    const NO_PANES: &str = r#"{"id":"cli:pane:list","result":{"panes":[{"pane_id":"w1:p1"}]}}"#;
-    const PANE_OPEN: &str =
-        r#"{"id":"cli:pane:list","result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w9:p1"}]}}"#;
-    const HERDR_JSON: &str = r#"{"id":"1","result":{"workspace":{"workspace_id":"w12","label":"fix-login-07"},"root_pane":{"pane_id":"w12:p1"}}}"#;
+    const HC_RUN_JSON: &str = r#"{"address":"t7","agent":"env","state":"live","turn":0}"#;
+    const GONE: &str = r#"{"error":{"hint":"see `hc ls --all`","kind":"not_found","message":"no terminal \"t3\""}}"#;
 
     struct Fixture {
         tmp: TempDir,
@@ -235,7 +273,8 @@ mod tests {
     }
 
     impl Fixture {
-        /// A `working` task `ID` in pane `w9:p1`, whose session `s1` started there.
+        /// A `working` task `ID` in terminal `t3`, whose session `s1` started there, in a repo
+        /// whose conductor runs in space `sp1`.
         fn new() -> Self {
             let tmp = tempfile::tempdir().unwrap();
             let ctx = Ctx {
@@ -249,14 +288,23 @@ mod tests {
             let fixture = Self { tmp, ctx };
             fixture.add(ID, Phase::Working);
             fixture.session_start(ID, "s1");
+            let record = RepoRecord {
+                schema: SchemaV2,
+                repo_root: ROOT.into(),
+                repo_id: fixture.ctx.repo.id.clone(),
+                conductor_session: "conductor-my-repo".into(),
+                terminal_id: Some("t1".into()),
+                space_id: Some("sp1".into()),
+            };
+            write_repo_record_atomic(&fixture.ctx.repo_dir(), &record).unwrap();
             fixture
         }
 
-        /// Adds a spawned task `id` in `phase`, with pane `w9:p1` and no events.
+        /// Adds a spawned task `id` in `phase`, with terminal `t3` and no events.
         fn add(&self, id: &str, phase: Phase) {
             let ts = "2026-10-14T12:00:00Z".parse().unwrap();
             let task = Task {
-                schema: SchemaV1,
+                schema: SchemaV2,
                 id: id.into(),
                 title: "Fix login".into(),
                 kind: TaskKind::Ship,
@@ -265,8 +313,7 @@ mod tests {
                 worktree_path: Some(format!("/src/my-repo/.worktrees/conductor-{id}").into()),
                 session_name: Some(format!("my-repo-{id}")),
                 claude_session_id: None,
-                herdr_workspace_id: Some("w9".into()),
-                herdr_pane_id: Some("w9:p1".into()),
+                terminal_id: Some("t3".into()),
                 pr_url: None,
                 created_at: ts,
                 updated_at: ts,
@@ -282,8 +329,7 @@ mod tests {
                 session_id: Some(session_id.into()),
                 payload: EventPayload::SessionStart {
                     source: "startup".into(),
-                    herdr_pane_id: Some("w9:p1".into()),
-                    herdr_workspace_id: Some("w9".into()),
+                    terminal_id: Some("t3".into()),
                     transcript_path: None,
                 },
             };
@@ -304,6 +350,10 @@ mod tests {
             write_task_atomic(&self.task_dir(id), &task).unwrap();
         }
 
+        fn home(&self) -> String {
+            self.tmp.path().join("home").to_string_lossy().into_owned()
+        }
+
         fn resume(&self, fake: &Fake, argv: &[&str]) -> Run {
             use clap::Parser;
             #[derive(Parser)]
@@ -318,74 +368,118 @@ mod tests {
                 &cli.args,
                 fake,
                 &Tools::default(),
+                Duration::ZERO,
                 &mut out,
                 &mut err,
             );
-            let home = self.tmp.path().join("home").to_string_lossy().into_owned();
             Run {
                 result,
-                out: String::from_utf8(out).unwrap().replace(&home, "<home>"),
+                out: String::from_utf8(out)
+                    .unwrap()
+                    .replace(&self.home(), "<home>"),
                 err: String::from_utf8(err).unwrap(),
             }
         }
     }
 
-    /// `fake` expecting the worker in `id` to be resumed in pane `w12:p1`.
-    fn reopen(fake: Fake) -> Fake {
-        fake.ok(&["herdr", "worktree", "open"], HERDR_JSON)
-            .ok(&["herdr", "pane", "run", "w12:p1"], "")
+    /// The worker's old terminal `t3` is gone.
+    fn gone(fake: Fake) -> Fake {
+        fake.fail(&["hc", "get", "t3"], hc::NOT_FOUND, GONE)
+    }
+
+    /// The old terminal `t3` is in `state`, running the worker if `worker`, else a shell.
+    fn old(fake: Fake, state: &str, worker: bool) -> Fake {
+        let argv: &[&str] = if worker {
+            &["env", "CONDUCTOR_TASK_ID=fix-login-07", "claude"]
+        } else {
+            &["/bin/zsh", "-l"]
+        };
+        fake.ok(&["hc", "get", "t3", "--json"], &get_json(state, argv))
+    }
+
+    /// The worker starts again in terminal `t7`, which Herdr shows in tab `tb9`.
+    fn restart(fake: Fake) -> Fake {
+        fake.ok(&["hc", "run"], HC_RUN_JSON)
+            .ok(&["herdr-app", "ls"], &ls(Some("t7")))
+            .ok(&["herdr-app", "do", "tab.rename"], r#"{"ok":true}"#)
     }
 
     #[test]
-    fn a_task_whose_pane_is_gone_is_reopened() {
+    fn a_task_whose_terminal_is_gone_is_restarted() {
         let fx = Fixture::new();
-        let fake = reopen(Fake::default().ok(&["herdr", "pane", "list"], NO_PANES));
+        let fake = restart(gone(Fake::default()));
         let run = fx.resume(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
-        assert_eq!(run.out, "fix-login-07 resumed in pane w12:p1\n");
+        assert_eq!(run.out, "fix-login-07 resumed in terminal t7\n");
         assert_eq!(run.err, "");
 
         let argvs = fake.argvs();
-        assert_eq!(argvs[0], ["herdr", "pane", "list"]);
+        assert_eq!(argvs[0], ["hc", "get", "t3", "--json"]);
         assert_eq!(
-            argvs[1],
+            argvs[1][..10],
             [
-                "herdr",
-                "worktree",
-                "open",
+                "hc",
+                "run",
+                "--bg",
+                "--json",
                 "--cwd",
-                ROOT,
-                "--path",
                 WORKTREE,
                 "--label",
-                ID,
-                "--no-focus",
-                "--json"
+                "herdr.space=sp1",
+                "--no-notify",
+                "--"
             ]
         );
-        assert_eq!(argvs[2].len(), 5);
-        let home = fx.tmp.path().join("home").to_string_lossy().into_owned();
-        insta::assert_snapshot!("resume_command", argvs[2][4].replace(&home, "<home>"));
+        let worker = shell::join(&argvs[1][10..]).replace(&fx.home(), "<home>");
+        insta::assert_snapshot!("resume_command", worker);
+        assert_eq!(
+            argvs[3][..5],
+            ["herdr-app", "do", "tab.rename", "--id", "tb9"]
+        );
 
         let task = fx.task(ID);
         assert_eq!(task.phase, Phase::Working);
-        assert_eq!(task.herdr_workspace_id.as_deref(), Some("w12"));
-        assert_eq!(task.herdr_pane_id.as_deref(), Some("w12:p1"));
+        assert_eq!(task.terminal_id.as_deref(), Some("t7"));
         assert_eq!(task.session_name.as_deref(), Some("my-repo-fix-login-07"));
     }
 
     #[test]
-    fn a_task_whose_pane_is_open_is_skipped() {
+    fn a_running_worker_is_skipped() {
         let fx = Fixture::new();
         let before = fx.task(ID);
-        let fake = Fake::default().ok(&["herdr", "pane", "list"], PANE_OPEN);
+        let fake = old(Fake::default(), "live", true);
         let run = fx.resume(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
         assert_eq!(fake.calls().len(), 1);
-        assert_eq!(run.out, "fix-login-07 skipped: pane w9:p1 is still open\n");
+        assert_eq!(
+            run.out,
+            "fix-login-07 skipped: terminal t3 is still running\n"
+        );
         assert_eq!(fx.task(ID), before);
+    }
+
+    #[test]
+    fn a_finished_terminal_is_removed_first() {
+        let fx = Fixture::new();
+        let fake = restart(old(Fake::default(), "finished", true).ok(&["hc", "rm", "t3"], ""));
+        fx.resume(&fake, &[]).result.unwrap();
+        assert!(fake.done());
+        assert_eq!(fx.task(ID).terminal_id.as_deref(), Some("t7"));
+    }
+
+    #[test]
+    fn a_shell_that_replaced_the_worker_is_killed_first() {
+        let fx = Fixture::new();
+        let fake = old(Fake::default(), "live", false)
+            .ok(&["hc", "kill", "t3"], "")
+            .ok(&["hc", "rm", "t3"], "");
+        let fake = restart(fake);
+        let run = fx.resume(&fake, &[]);
+        run.result.unwrap();
+        assert!(fake.done());
+        assert_eq!(run.out, "fix-login-07 resumed in terminal t7\n");
     }
 
     #[test]
@@ -393,7 +487,7 @@ mod tests {
         let fx = Fixture::new();
         // Sorts before `fix-login-07`, and has never started a session.
         fx.add("add-docs-01", Phase::Review);
-        let fake = reopen(Fake::default().ok(&["herdr", "pane", "list"], NO_PANES));
+        let fake = restart(gone(gone(Fake::default())));
         let run = fx.resume(&fake, &[]);
         assert_eq!(run.result.unwrap_err().to_string(), "cannot resume 1 task");
         assert_eq!(
@@ -403,20 +497,17 @@ mod tests {
         );
         // The other task still resumes.
         assert!(fake.done());
-        assert_eq!(run.out, "fix-login-07 resumed in pane w12:p1\n");
-        assert_eq!(
-            fx.task("add-docs-01").herdr_pane_id.as_deref(),
-            Some("w9:p1")
-        );
+        assert_eq!(run.out, "fix-login-07 resumed in terminal t7\n");
+        assert_eq!(fx.task("add-docs-01").terminal_id.as_deref(), Some("t3"));
     }
 
     #[test]
     fn the_latest_session_is_resumed() {
         let fx = Fixture::new();
         fx.session_start(ID, "s2");
-        let fake = reopen(Fake::default().ok(&["herdr", "pane", "list"], NO_PANES));
+        let fake = restart(gone(Fake::default()));
         fx.resume(&fake, &[]).result.unwrap();
-        let line = &fake.argvs()[2][4];
+        let line = shell::join(&fake.argvs()[1]);
         assert!(line.contains(" claude --resume s2 -n "), "{line}");
     }
 
@@ -425,12 +516,12 @@ mod tests {
         let mut fx = Fixture::new();
         fx.ctx.settings.model = Some("opus".into());
         fx.ctx.settings.effort = Some("high".into());
-        let fake = Fake::default().ok(&["herdr", "pane", "list"], NO_PANES);
+        let fake = gone(Fake::default());
         let run = fx.resume(&fake, &["--dry-run"]);
         run.result.unwrap();
         assert!(
             run.out
-                .ends_with(" --permission-mode auto --model opus --effort high'\n"),
+                .ends_with(" --permission-mode auto --model opus --effort high\n"),
             "{}",
             run.out
         );
@@ -447,18 +538,18 @@ mod tests {
             fx.add(id, phase);
             fx.session_start(id, "s9");
         }
-        let fake = reopen(Fake::default().ok(&["herdr", "pane", "list"], NO_PANES));
+        let fake = restart(gone(Fake::default()));
         let run = fx.resume(&fake, &[]);
         run.result.unwrap();
         assert!(fake.done());
-        assert_eq!(run.out, "fix-login-07 resumed in pane w12:p1\n");
+        assert_eq!(run.out, "fix-login-07 resumed in terminal t7\n");
     }
 
     #[test]
     fn a_named_task_must_be_live() {
         let fx = Fixture::new();
         fx.add("a-briefed", Phase::Briefed);
-        let fake = reopen(Fake::default().ok(&["herdr", "pane", "list"], NO_PANES));
+        let fake = restart(gone(Fake::default()));
         let run = fx.resume(&fake, &["a-briefed", ID, "nope"]);
         assert_eq!(run.result.unwrap_err().to_string(), "cannot resume 2 tasks");
         assert_eq!(
@@ -468,14 +559,14 @@ mod tests {
              conductor: cannot resume nope: no task `nope` in repo `my-repo-abc123`\n"
         );
         assert!(fake.done());
-        assert_eq!(run.out, "fix-login-07 resumed in pane w12:p1\n");
+        assert_eq!(run.out, "fix-login-07 resumed in terminal t7\n");
     }
 
     #[test]
-    fn a_task_with_no_pane_is_resumed() {
+    fn a_task_with_no_terminal_is_resumed() {
         let fx = Fixture::new();
-        fx.set_task(ID, |task| task.herdr_pane_id = None);
-        let fake = reopen(Fake::default().ok(&["herdr", "pane", "list"], PANE_OPEN));
+        fx.set_task(ID, |task| task.terminal_id = None);
+        let fake = restart(Fake::default());
         fx.resume(&fake, &[]).result.unwrap();
         assert!(fake.done());
     }
@@ -484,7 +575,7 @@ mod tests {
     fn a_task_with_no_worktree_fails() {
         let fx = Fixture::new();
         fx.set_task(ID, |task| task.worktree_path = None);
-        let fake = Fake::default().ok(&["herdr", "pane", "list"], NO_PANES);
+        let fake = gone(Fake::default());
         let run = fx.resume(&fake, &[]);
         assert!(run.result.is_err());
         assert_eq!(
@@ -495,36 +586,17 @@ mod tests {
     }
 
     #[test]
-    fn pane_run_failure_keeps_the_new_workspace_and_pane() {
+    fn hc_run_failure_leaves_no_terminal() {
         let fx = Fixture::new();
-        let fake = Fake::default()
-            .ok(&["herdr", "pane", "list"], NO_PANES)
-            .ok(&["herdr", "worktree", "open"], HERDR_JSON)
-            .fail(&["herdr", "pane", "run"], 2, "pane gone");
+        let fake = old(Fake::default(), "finished", true)
+            .ok(&["hc", "rm", "t3"], "")
+            .fail(&["hc", "run"], 1, "cannot reach herdr-core");
         let run = fx.resume(&fake, &[]);
         assert!(run.result.is_err());
-        assert_eq!(
-            run.err,
-            "conductor: cannot resume fix-login-07: opened pane w12:p1 but couldn't start the \
-             worker there; close the pane and rerun `conductor resume fix-login-07`: \
-             `herdr pane run` failed (exit 2): pane gone\n"
-        );
+        assert!(run.err.contains("cannot reach herdr-core"), "{}", run.err);
         let task = fx.task(ID);
-        assert_eq!(task.herdr_workspace_id.as_deref(), Some("w12"));
-        assert_eq!(task.herdr_pane_id.as_deref(), Some("w12:p1"));
-    }
-
-    #[test]
-    fn worktree_open_failure_changes_nothing() {
-        let fx = Fixture::new();
-        let before = fx.task(ID);
-        let fake = Fake::default()
-            .ok(&["herdr", "pane", "list"], NO_PANES)
-            .fail(&["herdr", "worktree", "open"], 1, "no such worktree");
-        let run = fx.resume(&fake, &[]);
-        assert!(run.result.is_err());
-        assert!(run.err.contains("no such worktree"), "{}", run.err);
-        assert_eq!(fx.task(ID), before);
+        assert_eq!(task.terminal_id, None);
+        assert_eq!(task.phase, Phase::Working);
     }
 
     #[test]
@@ -542,7 +614,7 @@ mod tests {
     fn dry_run_prints_commands_and_writes_nothing() {
         let fx = Fixture::new();
         let before = fx.task(ID);
-        let fake = Fake::default().ok(&["herdr", "pane", "list"], NO_PANES);
+        let fake = old(Fake::default(), "live", false);
         let run = fx.resume(&fake, &["--dry-run"]);
         run.result.unwrap();
         assert!(fake.done());

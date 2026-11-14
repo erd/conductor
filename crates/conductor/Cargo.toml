@@ -1,6 +1,6 @@
 [package]
 name = "conductor"
-description = "Multi-agent orchestrator for Claude Code and herdr"
+description = "Multi-agent orchestrator for Claude Code and Herdr"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

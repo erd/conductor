@@ -83,7 +83,7 @@ pub fn run(args: &WatchArgs) -> anyhow::Result<ExitCode> {
         Ok(watcher)
     });
 
-    let tools = Tools::resolve();
+    let tools = Tools::default();
     let mut poller = PrPoller::new(
         &System,
         &tools,

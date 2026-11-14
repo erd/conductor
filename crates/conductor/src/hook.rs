@@ -11,7 +11,7 @@ use std::panic::{self, AssertUnwindSafe};
 
 use anyhow::{Context as _, anyhow, bail};
 use conductor_state::{
-    Event, EventPayload, Home, append_event, read_repo_record, write_repo_record_atomic,
+    Event, EventPayload, Home, RepoRecord, append_event, read_repo_record, write_repo_record_atomic,
 };
 use jiff::Timestamp;
 use serde::Deserialize;
@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use crate::context::env_var;
 use crate::deck;
+use crate::hc::{self, SPACE_LABEL};
 use crate::log::append_log;
 use crate::runner::{System, Tools};
 
@@ -90,21 +91,41 @@ fn record(event: &str, task: Option<&str>, role: Option<&str>) -> anyhow::Result
             appended?;
         }
     } else if role == Some("conductor") && event == HookEvent::SessionStart {
-        let recorded = record_conductor_pane();
-        // The deck doesn't need repo.json, so open it even if recording failed.
-        if let Some(pane) = env_var("HERDR_PANE_ID") {
-            let workspace = env_var("HERDR_WORKSPACE_ID");
-            deck::open(&System, &Tools::resolve(), &pane, workspace.as_deref())
+        // Outside a Herdr terminal there's nothing to record or open.
+        let Some(terminal) = env_var("HC_TERMINAL_ID") else {
+            return Ok(());
+        };
+        let input: HookInput = serde_json::from_str(&stdin).unwrap_or_default();
+        let tools = Tools::default();
+        let shown = hc::get(&System, &tools, &terminal);
+        // `None` when hc couldn't say, so the recorded space is kept.
+        let space = shown
+            .as_ref()
+            .ok()
+            .map(|t| t.as_ref().and_then(|t| t.labels.get(SPACE_LABEL).cloned()));
+        let recorded = update_repo_record(|record| {
+            record.terminal_id = Some(terminal.clone());
+            if let Some(space) = space.clone() {
+                record.space_id = space;
+            }
+        });
+        // Only on a fresh session: a deck already open can't be seen from here, and `clear`,
+        // `compact` and `resume` keep the conductor in the same tab.
+        if input.source.as_deref() == Some("startup")
+            && let Some(Some(space)) = &space
+            && let Some(app_home) = deck::app_home()
+        {
+            deck::open(&System, &tools, &app_home, &terminal, space)
                 .context("cannot open the deck")?;
         }
+        shown.context("cannot read the conductor's terminal")?;
         recorded?;
     }
     Ok(())
 }
 
-/// Saves the conductor session's herdr pane and workspace in `repo.json`, keeping the recorded
-/// ones when not running inside herdr.
-fn record_conductor_pane() -> anyhow::Result<()> {
+/// Applies `change` to `repo.json`, which `conductor init` must have created.
+fn update_repo_record(change: impl FnOnce(&mut RepoRecord)) -> anyhow::Result<()> {
     let repo_dir = Home::resolve()?.repo_dir(&repo_id()?);
     let mut record = read_repo_record(&repo_dir)?.with_context(|| {
         format!(
@@ -112,12 +133,7 @@ fn record_conductor_pane() -> anyhow::Result<()> {
             repo_dir.display()
         )
     })?;
-    if let Some(pane) = env_var("HERDR_PANE_ID") {
-        record.herdr_pane_id = Some(pane);
-    }
-    if let Some(workspace) = env_var("HERDR_WORKSPACE_ID") {
-        record.herdr_workspace_id = Some(workspace);
-    }
+    change(&mut record);
     write_repo_record_atomic(&repo_dir, &record)?;
     Ok(())
 }
@@ -183,7 +199,8 @@ struct HookInput {
     reason: Option<String>,
 }
 
-/// The event payload for hook `event` with `input`, reading herdr ids through `env`.
+/// The event payload for hook `event` with `input`, reading the session's hc terminal through
+/// `env`.
 fn payload(
     event: HookEvent,
     input: &HookInput,
@@ -197,8 +214,7 @@ fn payload(
     Ok(match event {
         HookEvent::SessionStart => EventPayload::SessionStart {
             source: required(&input.source, "source")?,
-            herdr_pane_id: env("HERDR_PANE_ID"),
-            herdr_workspace_id: env("HERDR_WORKSPACE_ID"),
+            terminal_id: env("HC_TERMINAL_ID"),
             transcript_path: input.transcript_path.clone(),
         },
         HookEvent::UserPromptSubmit => {

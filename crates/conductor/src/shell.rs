@@ -1,7 +1,5 @@
-//! Quoting for command lines that a shell reads: `conductor start --dry-run` prints one, and
-//! `conductor spawn` types one into a herdr pane, whose shell might be bash, zsh or fish.
-
-use anyhow::bail;
+//! Quoting for the command lines the `--dry-run` flags of `conductor start`, `spawn` and
+//! `resume` print, for pasting into a shell that might be bash, zsh or fish.
 
 /// `s` as one shell word that bash, zsh and fish all read back as `s`.
 ///
@@ -32,15 +30,6 @@ pub fn join<S: AsRef<str>>(words: &[S]) -> String {
     words.join(" ")
 }
 
-/// Fails if `s` holds a control character. Text typed into a pane can't carry one: a newline
-/// would submit the line early.
-pub fn check_typeable(s: &str) -> anyhow::Result<()> {
-    if s.chars().any(char::is_control) {
-        bail!("{s:?} contains a control character, which can't be typed into a shell");
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -55,13 +44,6 @@ mod tests {
         assert_eq!(quote(r"a\b"), r"'a'\\'b'");
         assert_eq!(quote(""), "''");
         assert_eq!(quote("$HOME"), "'$HOME'");
-    }
-
-    #[test]
-    fn rejects_control_characters() {
-        assert!(check_typeable("plain text, $HOME and 'quotes'").is_ok());
-        assert!(check_typeable("two\nlines").is_err());
-        assert!(check_typeable("tab\there").is_err());
     }
 
     /// Each shell prints the words of a quoted command line one per line; they must match the
