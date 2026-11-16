@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/erd/conductor/compare/v0.3.0...v0.4.0) - 2026-11-16
+
+### Added
+
+- [**breaking**] Port conductor to the Herdr app ([#56](https://github.com/erd/conductor/pull/56))
+
+### Fixed
+
+- Pass the spawner's PATH to workers ([#57](https://github.com/erd/conductor/pull/57))
+
 ## [0.3.0](https://github.com/erd/conductor/compare/v0.2.0...v0.3.0) - 2026-11-03
 
 ### Added
